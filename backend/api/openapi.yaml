@@ -1,0 +1,543 @@
+openapi: 3.1.0
+info:
+  title: TaskPilot API
+  version: 0.1.0-proposed
+  summary: PROPOSED contract — not implemented.
+  description: |
+    Authoritative HTTP contract for TaskPilot. Behaviour is explained in
+    docs/06-API-SPECIFICATION.md; job state rules in docs/05-JOB-LIFECYCLE.md.
+    Paths under /internal/v1 are served on the private worker listener only.
+  license:
+    name: TBD
+    identifier: UNLICENSED
+servers:
+  - url: http://localhost:8080
+    description: Local public listener
+  - url: http://localhost:8081
+    description: Local internal worker listener (never public)
+tags:
+  - name: jobs
+  - name: meta
+  - name: health
+  - name: worker
+    description: Internal worker API (private network, worker token)
+
+security:
+  - apiKey: []
+
+paths:
+  /v1/jobs:
+    post:
+      tags: [jobs]
+      operationId: submitJob
+      summary: Submit a job
+      description: Requires scope `jobs:write`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitJobRequest' }
+      responses:
+        '202':
+          description: Job accepted (or idempotent replay of the original job)
+          headers:
+            Location: { schema: { type: string }, description: '/v1/jobs/{id}' }
+            Idempotent-Replayed: { schema: { type: string, enum: ['true'] } }
+            X-Request-ID: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '415': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Problem' }
+    get:
+      tags: [jobs]
+      operationId: listJobs
+      summary: List the caller's jobs (newest first)
+      description: Requires scope `jobs:read`. Items omit `payload` and `result`.
+      parameters:
+        - name: status
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/JobStatus' }
+        - name: task_type
+          in: query
+          schema: { $ref: '#/components/schemas/TaskTypeName' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Page of jobs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobPage' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /v1/jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      tags: [jobs]
+      operationId: getJob
+      summary: Get one job
+      description: Requires `jobs:read`. Another tenant's job returns 404, same as a missing one.
+      responses:
+        '200':
+          description: The job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/jobs/{job_id}/attempts:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      tags: [jobs]
+      operationId: listJobAttempts
+      summary: List a job's attempts (oldest first)
+      responses:
+        '200':
+          description: Attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 10
+                    items: { $ref: '#/components/schemas/Attempt' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
+  /v1/jobs/{job_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      tags: [jobs]
+      operationId: cancelJob
+      summary: Cancel a job (best-effort for running jobs)
+      description: Requires `jobs:cancel`. See docs/05-JOB-LIFECYCLE.md §10.
+      responses:
+        '200':
+          description: Job is cancelled (was queued, or already cancelled)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '202':
+          description: Cancel requested for a running job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /v1/task-types:
+    get:
+      tags: [meta]
+      operationId: listTaskTypes
+      summary: List enabled task types and their payload schemas
+      responses:
+        '200':
+          description: Task types
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TaskType' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /v1/me:
+    get:
+      tags: [meta]
+      operationId: getMe
+      summary: Describe the presented API key
+      responses:
+        '200':
+          description: Identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /healthz:
+    get:
+      tags: [health]
+      operationId: liveness
+      security: []
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, const: ok } }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: readiness
+      security: []
+      responses:
+        '200':
+          description: Ready to serve
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+
+  /internal/v1/claims:
+    post:
+      tags: [worker]
+      operationId: claimJob
+      security: [{ workerToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimRequest' }
+      responses:
+        '200':
+          description: A job was claimed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimResponse' }
+        '204': { description: No job available }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
+  /internal/v1/attempts/{attempt_id}/heartbeat:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    post:
+      tags: [worker]
+      operationId: heartbeat
+      security: [{ workerToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '200':
+          description: Lease renewed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeartbeatResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /internal/v1/attempts/{attempt_id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    post:
+      tags: [worker]
+      operationId: completeAttempt
+      security: [{ workerToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../contracts/job.schema.json#/$defs/CompleteRequest' }
+      responses:
+        '204': { description: Applied (or identical retry of an applied report) }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+
+  /internal/v1/attempts/{attempt_id}/fail:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    post:
+      tags: [worker]
+      operationId: failAttempt
+      security: [{ workerToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../contracts/job.schema.json#/$defs/FailRequest' }
+      responses:
+        '204': { description: Applied }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /internal/v1/attempts/{attempt_id}/cancelled:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    post:
+      tags: [worker]
+      operationId: confirmCancelled
+      security: [{ workerToken: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '204': { description: Applied }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: 'tp_<12 char prefix>_<43 char secret>'
+    workerToken:
+      type: http
+      scheme: bearer
+      description: Shared worker token; internal listener only.
+
+  headers:
+    RequestId:
+      schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AttemptId:
+      name: attempt_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Scoped per tenant; retained 24 h (provisional).
+      schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[\x21-\x7E]+$' }
+
+  responses:
+    Problem:
+      description: Error (RFC 9457)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled]
+    FailureReason:
+      type: [string, 'null']
+      enum: [permanent_error, max_attempts_exceeded, null]
+    AttemptStatus:
+      type: string
+      enum: [running, succeeded, failed, timed_out, lease_expired, cancelled]
+    TaskTypeName:
+      type: string
+      pattern: '^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$'
+      maxLength: 100
+    ErrorInfo:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9_]{0,63}$' }
+        message: { type: string, maxLength: 1000 }
+
+    SubmitJobRequest:
+      type: object
+      additionalProperties: false
+      required: [task_type, task_version, payload]
+      properties:
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer, minimum: 1 }
+        payload:
+          type: object
+          description: Validated against the task type's JSON Schema; ≤ 64 KiB serialized.
+        max_attempts: { type: integer, minimum: 1, maximum: 10 }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 900 }
+        run_at: { type: string, format: date-time }
+
+    Job:
+      type: object
+      required: [id, task_type, task_version, status, cancel_requested, attempt_count,
+                 max_attempts, timeout_seconds, next_attempt_at, last_error, failure_reason,
+                 created_at, updated_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        cancel_requested: { type: boolean }
+        payload: { type: object, description: Omitted in list responses }
+        result: { type: [object, 'null'], description: Set only when succeeded; omitted in list responses }
+        attempt_count: { type: integer, minimum: 0 }
+        max_attempts: { type: integer }
+        timeout_seconds: { type: integer }
+        next_attempt_at: { type: [string, 'null'], format: date-time }
+        last_error:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorInfo'
+            - type: 'null'
+        failure_reason: { $ref: '#/components/schemas/FailureReason' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+
+    JobPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Job' }
+        next_cursor: { type: [string, 'null'] }
+
+    Attempt:
+      type: object
+      required: [id, attempt_no, status, started_at, finished_at, error]
+      properties:
+        id: { type: string, format: uuid }
+        attempt_no: { type: integer, minimum: 1 }
+        status: { $ref: '#/components/schemas/AttemptStatus' }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        error:
+          oneOf:
+            - allOf:
+                - $ref: '#/components/schemas/ErrorInfo'
+                - type: object
+                  properties: { retryable: { type: boolean } }
+            - type: 'null'
+
+    TaskType:
+      type: object
+      required: [task_type, task_version, payload_schema, default_timeout_seconds,
+                 max_timeout_seconds, default_max_attempts]
+      properties:
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        payload_schema: { type: object, description: JSON Schema 2020-12 }
+        default_timeout_seconds: { type: integer }
+        max_timeout_seconds: { type: integer }
+        default_max_attempts: { type: integer }
+
+    Me:
+      type: object
+      required: [tenant_id, tenant_name, key_id, key_name, scopes]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        tenant_name: { type: string }
+        key_id: { type: string, format: uuid }
+        key_name: { type: string }
+        scopes:
+          type: array
+          items: { type: string, enum: ['jobs:read', 'jobs:write', 'jobs:cancel'] }
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          additionalProperties: { type: string, enum: [ok, failing] }
+          examples: [{ database: ok, schema_version: ok, shutting_down: ok }]
+
+    Problem:
+      type: object
+      required: [type, title, status, code, request_id]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        request_id: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: { type: string, description: JSON Pointer }
+              message: { type: string }
+
+    ClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [worker_id, supported]
+      properties:
+        worker_id: { type: string, minLength: 1, maxLength: 128 }
+        supported:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [task_type, task_version]
+            properties:
+              task_type: { $ref: '#/components/schemas/TaskTypeName' }
+              task_version: { type: integer, minimum: 1 }
+
+    ClaimResponse:
+      type: object
+      required: [lease_seconds, heartbeat_interval_seconds, job]
+      properties:
+        lease_seconds: { type: integer, minimum: 1 }
+        heartbeat_interval_seconds: { type: integer, minimum: 1 }
+        job: { $ref: '../contracts/job.schema.json' }
+
+    HeartbeatResponse:
+      type: object
+      required: [lease_seconds, cancel_requested]
+      properties:
+        lease_seconds: { type: integer }
+        cancel_requested: { type: boolean }

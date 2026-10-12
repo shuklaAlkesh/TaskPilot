@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taskpilot.dev/contracts/task-types/data.csv_summary.v1.json",
+  "title": "data.csv_summary v1 payload (PROPOSED)",
+  "description": "Result: {\"rows\": int, \"columns\": [{\"name\": str, \"non_empty\": int, \"distinct\": int, \"numeric\": bool, \"min\": number|null, \"max\": number|null, \"mean\": number|null}]}. Malformed CSV → PermanentError code csv_parse_error. Max 100 columns.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["csv"],
+  "properties": {
+    "csv": { "type": "string", "minLength": 1, "maxLength": 60000 },
+    "has_header": { "type": "boolean", "default": true },
+    "delimiter": { "type": "string", "enum": [",", ";", "\t", "|"], "default": "," }
+  },
+  "x-taskpilot": {
+    "title": "CSV summary",
+    "default_timeout_seconds": 30,
+    "max_timeout_seconds": 120,
+    "default_max_attempts": 3,
+    "idempotent": true,
+    "side_effects": false,
+    "test_only": false
+  }
+}

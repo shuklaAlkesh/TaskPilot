@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://taskpilot.dev/contracts/task-types/system.sleep.v1.json",
+  "title": "system.sleep v1 payload (PROPOSED, test-only)",
+  "description": "Sleeps, then succeeds or fails as instructed. Used to test timeouts, cancellation and retries. Enabled only when TASKPILOT_ENABLE_TEST_TASKS=true.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seconds"],
+  "properties": {
+    "seconds": { "type": "number", "minimum": 0, "maximum": 600 },
+    "outcome": { "type": "string", "enum": ["succeed", "retryable_error", "permanent_error", "crash"], "default": "succeed" },
+    "fail_until_attempt": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Apply `outcome` only while attempt_no < this value; succeed afterwards." }
+  },
+  "x-taskpilot": {
+    "title": "Sleep (test only)",
+    "default_timeout_seconds": 60,
+    "max_timeout_seconds": 900,
+    "default_max_attempts": 3,
+    "idempotent": true,
+    "side_effects": false,
+    "test_only": true
+  }
+}

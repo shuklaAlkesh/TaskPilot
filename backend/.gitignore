@@ -1,0 +1,44 @@
+# ==============================================================
+# Backend — Go server (server/) + Python worker (worker/)
+# ==============================================================
+
+# ---------- Go ----------
+/server/bin/
+/server/dist/
+/server/taskpilot-api
+/server/taskpilot-admin
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.prof
+/server/vendor/
+go.work
+go.work.sum
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# ---------- Tests, benchmarks & local runtime ----------
+/bench/results/
+/deploy/postgres/data/
+docker-compose.override.yml
+compose.override.yaml

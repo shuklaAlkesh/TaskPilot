@@ -1,0 +1,34 @@
+# ==============================================================
+# Frontend — Next.js dashboard (Vercel)
+# ==============================================================
+
+# ---------- Dependencies ----------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/releases
+
+# ---------- Build output ----------
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---------- Vercel ----------
+.vercel/
+
+# ---------- Tests ----------
+coverage/
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# ---------- Debug logs ----------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache

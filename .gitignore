@@ -1,0 +1,56 @@
+# ==============================================================
+# TaskPilot — repository-wide ignore rules
+# Service-specific rules live in backend/.gitignore and frontend/.gitignore
+# ==============================================================
+
+# ---------- Documentation (kept local, never pushed) ----------
+*.md
+*.MD
+docs/
+# To publish a file later, un-comment its exception, e.g.:
+# !/README.md
+# !/SECURITY.md
+
+# ---------- Secrets & local environment ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# ---------- AI assistant / tooling local state ----------
+.claude/
+.cursor/
+.aider*
+
+# ---------- Editors & IDEs ----------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# ---------- Operating systems ----------
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------- Logs, temp & local data ----------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.dump
+*.sql.gz
+pgdata/
