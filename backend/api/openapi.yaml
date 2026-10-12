@@ -74,6 +74,9 @@ paths:
         - name: task_type
           in: query
           schema: { $ref: '#/components/schemas/TaskTypeName' }
+        - name: queue
+          in: query
+          schema: { $ref: '#/components/schemas/QueueName' }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
@@ -176,6 +179,29 @@ paths:
                     items: { $ref: '#/components/schemas/TaskType' }
         '401': { $ref: '#/components/responses/Problem' }
 
+  /v1/stats:
+    get:
+      tags: [meta]
+      operationId: getStats
+      summary: Aggregated job statistics for the caller's tenant
+      description: |
+        Requires `jobs:read`. `totals` are all-time counts (within retention); `throughput`,
+        `latency`, `errors`, `attempts`, and task-type run times cover the requested window.
+        All values come from one database snapshot.
+      parameters:
+        - name: window
+          in: query
+          schema: { type: string, enum: ['15m', '1h', '6h', '24h'], default: '1h' }
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
   /v1/me:
     get:
       tags: [meta]
@@ -193,6 +219,7 @@ paths:
     get:
       tags: [health]
       operationId: liveness
+      summary: Process is alive
       security: []
       responses:
         '200':
@@ -207,6 +234,7 @@ paths:
     get:
       tags: [health]
       operationId: readiness
+      summary: Ready to serve traffic (database reachable, not shutting down)
       security: []
       responses:
         '200':
@@ -220,10 +248,36 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Readiness' }
 
+  /internal/v1/workers:
+    post:
+      tags: [worker]
+      operationId: registerWorker
+      summary: Announce a worker and register the task types it can run
+      description: |
+        Called by each worker at startup. Definitions are upserted: metadata may change freely; a
+        version's schema may change only while no queued or running job uses it (else 409).
+      security: [{ workerToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterWorkerRequest' }
+      responses:
+        '200':
+          description: Registered
+          content:
+            application/json:
+              schema: { type: object, required: [registered], properties: { registered: { type: integer } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+
   /internal/v1/claims:
     post:
       tags: [worker]
       operationId: claimJob
+      summary: Lease the next job from the worker's queues
       security: [{ workerToken: [] }]
       requestBody:
         required: true
@@ -247,6 +301,7 @@ paths:
     post:
       tags: [worker]
       operationId: heartbeat
+      summary: Extend the lease of a running attempt
       security: [{ workerToken: [] }]
       requestBody:
         content:
@@ -268,6 +323,7 @@ paths:
     post:
       tags: [worker]
       operationId: completeAttempt
+      summary: Report a successful result
       security: [{ workerToken: [] }]
       requestBody:
         required: true
@@ -289,6 +345,7 @@ paths:
     post:
       tags: [worker]
       operationId: failAttempt
+      summary: Report a classified failure
       security: [{ workerToken: [] }]
       requestBody:
         required: true
@@ -308,6 +365,7 @@ paths:
     post:
       tags: [worker]
       operationId: confirmCancelled
+      summary: Confirm the handler was stopped after a cancel request
       security: [{ workerToken: [] }]
       requestBody:
         content:
@@ -378,7 +436,7 @@ components:
       enum: [running, succeeded, failed, timed_out, lease_expired, cancelled]
     TaskTypeName:
       type: string
-      pattern: '^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$'
+      pattern: '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$'
       maxLength: 100
     ErrorInfo:
       type: object
@@ -396,24 +454,27 @@ components:
         task_version: { type: integer, minimum: 1 }
         payload:
           type: object
+          additionalProperties: true
           description: Validated against the task type's JSON Schema; ≤ 64 KiB serialized.
         max_attempts: { type: integer, minimum: 1, maximum: 10 }
-        timeout_seconds: { type: integer, minimum: 1, maximum: 900 }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 86400, description: 'Up to the task type max_timeout_seconds' }
         run_at: { type: string, format: date-time }
+        queue: { $ref: '#/components/schemas/QueueName' }
 
     Job:
       type: object
-      required: [id, task_type, task_version, status, cancel_requested, attempt_count,
+      required: [id, task_type, task_version, queue, status, cancel_requested, attempt_count,
                  max_attempts, timeout_seconds, next_attempt_at, last_error, failure_reason,
                  created_at, updated_at, started_at, finished_at]
       properties:
         id: { type: string, format: uuid }
         task_type: { $ref: '#/components/schemas/TaskTypeName' }
         task_version: { type: integer }
+        queue: { $ref: '#/components/schemas/QueueName' }
         status: { $ref: '#/components/schemas/JobStatus' }
         cancel_requested: { type: boolean }
-        payload: { type: object, description: Omitted in list responses }
-        result: { type: [object, 'null'], description: Set only when succeeded; omitted in list responses }
+        payload: { type: object, additionalProperties: true, description: Omitted in list responses }
+        result: { type: [object, 'null'], additionalProperties: true, description: Set only when succeeded; omitted in list responses }
         attempt_count: { type: integer, minimum: 0 }
         max_attempts: { type: integer }
         timeout_seconds: { type: integer }
@@ -456,17 +517,122 @@ components:
 
     TaskType:
       type: object
-      required: [task_type, task_version, payload_schema, default_timeout_seconds,
-                 max_timeout_seconds, default_max_attempts]
+      required: [task_type, task_version, queue, workers_online, title, description, payload_schema, example, default_timeout_seconds,
+                 max_timeout_seconds, default_max_attempts, idempotent, side_effects, test_only]
       properties:
         task_type: { $ref: '#/components/schemas/TaskTypeName' }
         task_version: { type: integer }
+        queue: { $ref: '#/components/schemas/QueueName' }
+        workers_online: { type: integer, description: Online workers that can run this task type. 0 means jobs will wait. }
         title: { type: string }
-        description: { type: string }
-        payload_schema: { type: object, description: JSON Schema 2020-12 }
+        description: { type: string, description: Plain-language summary registered by the worker }
+        payload_schema: { type: object, additionalProperties: true, description: JSON Schema 2020-12 }
+        example: { type: [object, 'null'], additionalProperties: true, description: A valid example payload }
         default_timeout_seconds: { type: integer }
         max_timeout_seconds: { type: integer }
         default_max_attempts: { type: integer }
+        idempotent: { type: boolean, description: Safe to run more than once }
+        side_effects: { type: boolean, description: Touches anything outside the worker process }
+        test_only: { type: boolean, description: Only enabled when TASKPILOT_ENABLE_TEST_TASKS=true }
+
+    NullableMs: { type: [number, 'null'], description: Milliseconds; null when there is no data }
+    Stats:
+      type: object
+      required: [generated_at, window, bucket_seconds, totals, success_rate, queue_lag_ms, last_minute, latency, throughput, task_types, errors, attempts, queues]
+      properties:
+        generated_at: { type: string, format: date-time }
+        window: { type: string, enum: ['15m', '1h', '6h', '24h'] }
+        bucket_seconds: { type: integer }
+        totals:
+          type: object
+          required: [submitted, delayed, retry_waiting, ready, running, succeeded, failed, cancelled, retries, jobs_retried, active_workers]
+          properties:
+            submitted: { type: integer }
+            delayed: { type: integer, description: Queued with available_at in the future (run_at or retry backoff) }
+            retry_waiting: { type: integer, description: Part of delayed that waits for a retry }
+            ready: { type: integer, description: Queued and claimable now }
+            running: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer, description: Dead letter }
+            cancelled: { type: integer }
+            retries: { type: integer, description: Retry attempts started }
+            jobs_retried: { type: integer }
+            active_workers: { type: integer, description: Distinct workers running this tenant's jobs now }
+        success_rate: { type: [number, 'null'], description: 'succeeded / (succeeded + failed); null when both are 0' }
+        queue_lag_ms: { $ref: '#/components/schemas/NullableMs', description: How long the oldest ready job has been claimable }
+        last_minute:
+          type: object
+          description: Jobs submitted and finished in the 60 seconds before generated_at
+          required: [submitted, finished]
+          properties:
+            submitted: { type: integer }
+            finished: { type: integer }
+        latency:
+          type: object
+          required: [time_to_start_p50_ms, time_to_start_p95_ms, run_time_p50_ms, run_time_p95_ms, time_to_complete_p50_ms, time_to_complete_p95_ms]
+          properties:
+            time_to_start_p50_ms: { $ref: '#/components/schemas/NullableMs' }
+            time_to_start_p95_ms: { $ref: '#/components/schemas/NullableMs' }
+            run_time_p50_ms: { $ref: '#/components/schemas/NullableMs' }
+            run_time_p95_ms: { $ref: '#/components/schemas/NullableMs' }
+            time_to_complete_p50_ms: { $ref: '#/components/schemas/NullableMs' }
+            time_to_complete_p95_ms: { $ref: '#/components/schemas/NullableMs' }
+        throughput:
+          type: array
+          items:
+            type: object
+            required: [start, submitted, succeeded, failed, cancelled, retried]
+            properties:
+              start: { type: string, format: date-time }
+              submitted: { type: integer }
+              succeeded: { type: integer }
+              failed: { type: integer }
+              cancelled: { type: integer }
+              retried: { type: integer }
+        task_types:
+          type: array
+          items:
+            type: object
+            required: [task_type, total, queued, running, succeeded, failed, cancelled, retries, run_time_p50_ms, run_time_p95_ms]
+            properties:
+              task_type: { $ref: '#/components/schemas/TaskTypeName' }
+              total: { type: integer }
+              queued: { type: integer }
+              running: { type: integer }
+              succeeded: { type: integer }
+              failed: { type: integer }
+              cancelled: { type: integer }
+              retries: { type: integer }
+              run_time_p50_ms: { $ref: '#/components/schemas/NullableMs' }
+              run_time_p95_ms: { $ref: '#/components/schemas/NullableMs' }
+        errors:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [code, count]
+            properties:
+              code: { type: string }
+              count: { type: integer }
+        attempts:
+          type: object
+          description: Attempt outcomes finished in the window, keyed by AttemptStatus
+          additionalProperties: { type: integer }
+        queues:
+          type: array
+          description: Every known queue with this tenant's waiting/running jobs and the workers serving it
+          items:
+            type: object
+            required: [queue, ready, delayed, running, lag_ms, workers_online, slots, task_types]
+            properties:
+              queue: { $ref: '#/components/schemas/QueueName' }
+              ready: { type: integer }
+              delayed: { type: integer }
+              running: { type: integer }
+              lag_ms: { $ref: '#/components/schemas/NullableMs' }
+              workers_online: { type: integer }
+              slots: { type: integer, description: Total concurrency of online workers serving the queue }
+              task_types: { type: integer, description: Registered task types routed to the queue }
 
     Me:
       type: object
@@ -509,16 +675,58 @@ components:
               field: { type: string, description: JSON Pointer }
               message: { type: string }
 
+    QueueName:
+      type: string
+      pattern: '^[a-z][a-z0-9_.-]{0,62}$'
+      description: Like Celery queues. Workers subscribe to queues; task types route to one by default.
+
+    TaskTypeDefinition:
+      type: object
+      description: What a worker registers for one task type version (ADR-0009)
+      required: [task_type, task_version, queue, title, description, payload_schema, default_timeout_seconds,
+                 max_timeout_seconds, default_max_attempts, idempotent, side_effects]
+      properties:
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer, minimum: 1 }
+        queue: { $ref: '#/components/schemas/QueueName' }
+        title: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 2000 }
+        payload_schema: { type: object, additionalProperties: true, description: 'JSON Schema 2020-12 with "type": "object", <= 64 KiB' }
+        example: { type: [object, 'null'], additionalProperties: true, description: Must validate against payload_schema }
+        default_timeout_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        max_timeout_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        default_max_attempts: { type: integer, minimum: 1, maximum: 10 }
+        idempotent: { type: boolean }
+        side_effects: { type: boolean, description: 'With idempotent: false, default_max_attempts must be 1' }
+        test_only: { type: boolean, default: false }
+
+    RegisterWorkerRequest:
+      type: object
+      additionalProperties: false
+      required: [worker_id, hostname, version, concurrency, queues, task_types]
+      properties:
+        worker_id: { type: string, minLength: 1, maxLength: 128 }
+        hostname: { type: string, maxLength: 255 }
+        version: { type: string, maxLength: 64 }
+        concurrency: { type: integer, minimum: 1, maximum: 1024 }
+        queues: { type: array, minItems: 1, maxItems: 50, items: { $ref: '#/components/schemas/QueueName' } }
+        task_types: { type: array, minItems: 1, maxItems: 500, items: { $ref: '#/components/schemas/TaskTypeDefinition' } }
+
     ClaimRequest:
       type: object
       additionalProperties: false
-      required: [worker_id, supported]
+      required: [worker_id, queues, supported]
       properties:
         worker_id: { type: string, minLength: 1, maxLength: 128 }
+        queues:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/QueueName' }
         supported:
           type: array
           minItems: 1
-          maxItems: 100
+          maxItems: 500
           items:
             type: object
             additionalProperties: false

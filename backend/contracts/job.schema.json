@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://taskpilot.dev/contracts/job.schema.json",
   "title": "TaskPilot job envelope (PROPOSED, schema_version 1)",
-  "description": "Envelope Go sends to the Python worker in a claim response, plus the worker's outcome report bodies. Authoritative description: docs/03-TECHNICAL-DESIGN.md §6. Task payload schemas live in contracts/task-types/.",
+  "description": "Envelope Go sends to the Python worker in a claim response, plus the worker's outcome report bodies. Authoritative description: docs/03-TECHNICAL-DESIGN.md §6. Payload schemas are registered by workers (POST /internal/v1/workers, ADR-0009) from their pydantic models.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,14 +17,14 @@
     "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
     "task_type": { "$ref": "#/$defs/TaskTypeName" },
     "task_version": { "type": "integer", "minimum": 1 },
-    "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 },
-    "payload": { "type": "object", "description": "Validated by Go against contracts/task-types/<task_type>.v<task_version>.json before enqueue." },
+    "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+    "payload": { "type": "object", "description": "Validated by Go against the payload_schema the worker registered for this task type version, before enqueue." },
     "created_at": { "type": "string", "format": "date-time" }
   },
   "$defs": {
     "TaskTypeName": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$",
       "maxLength": 100
     },
     "ErrorCode": {
@@ -76,21 +76,6 @@
           }
         }
       ]
-    },
-    "TaskTypeMetadata": {
-      "description": "Value of the `x-taskpilot` keyword in each contracts/task-types/*.json file.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["title", "default_timeout_seconds", "max_timeout_seconds", "default_max_attempts", "idempotent", "side_effects", "test_only"],
-      "properties": {
-        "title": { "type": "string" },
-        "default_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 },
-        "max_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 },
-        "default_max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
-        "idempotent": { "type": "boolean" },
-        "side_effects": { "type": "boolean" },
-        "test_only": { "type": "boolean", "description": "Enabled only when TASKPILOT_ENABLE_TEST_TASKS=true." }
-      }
     }
   }
 }
