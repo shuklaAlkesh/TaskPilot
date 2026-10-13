@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // schedule time zones must resolve on hosts and images without zoneinfo
 
 	"golang.org/x/sync/errgroup"
 
@@ -71,6 +72,7 @@ func run() error {
 	g.Go(func() error { return serve(public) })
 	g.Go(func() error { return serve(internal) })
 	g.Go(func() error { return reaper.Run(gctx, svc, cfg.ReaperInterval, log) })
+	g.Go(func() error { return reaper.RunSchedules(gctx, svc, cfg.SchedulerInterval, log) })
 	g.Go(func() error {
 		return types.Run(gctx, registryRefresh, func(err error) { log.ErrorContext(gctx, "refresh task types", "error", err) })
 	})

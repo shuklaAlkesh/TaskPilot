@@ -87,7 +87,7 @@ func testDefinitions() []tasktypes.Definition {
 func newService(t *testing.T) *Service {
 	t.Helper()
 	ctx := context.Background()
-	_, err := testPool.Exec(ctx, `TRUNCATE jobs, job_attempts, audit_events, task_types, workers CASCADE`)
+	_, err := testPool.Exec(ctx, `TRUNCATE jobs, job_attempts, audit_events, task_types, workers, schedules CASCADE`)
 	require.NoError(t, err)
 	types := tasktypes.NewRegistry(testPool, true)
 	require.NoError(t, types.Register(ctx, "test-worker", testDefinitions()))

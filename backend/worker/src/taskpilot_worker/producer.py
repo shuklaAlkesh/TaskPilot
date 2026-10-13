@@ -1,4 +1,5 @@
-"""Submit and track jobs from application code (the replacement for Celery's .delay / apply_async).
+"""Submit and track jobs from application code (the replacement for Celery's .delay / apply_async),
+and manage recurring schedules (the replacement for celery beat).
 
     from taskpilot_worker.producer import TaskPilot
 
@@ -14,8 +15,8 @@ a tenant API key with jobs:write, never the worker token.
 
 import time
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
-from typing import Any, Self
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 
@@ -51,7 +52,7 @@ class TaskPilot:
             transport=transport,
         )
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> "TaskPilot":
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -94,7 +95,8 @@ class TaskPilot:
         if timeout_seconds is not None:
             body["timeout_seconds"] = timeout_seconds
         if delay_seconds:
-            body["run_at"] = (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
+            run_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+            body["run_at"] = run_at.isoformat()
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
         return self._call("POST", "/v1/jobs", json=body, headers=headers)
 
@@ -105,6 +107,53 @@ class TaskPilot:
     def cancel(self, job_id: str) -> dict[str, Any]:
         """Cancel a queued job, or ask the worker to stop a running one (best-effort)."""
         return self._call("POST", f"/v1/jobs/{job_id}/cancel")
+
+    def put_schedule(
+        self,
+        name: str,
+        task_type: str,
+        payload: Mapping[str, Any],
+        *,
+        every_seconds: int | None = None,
+        cron: str | None = None,
+        tz: str = "UTC",
+        version: int = 1,
+        queue: str | None = None,
+        enabled: bool = True,
+        allow_overlap: bool = False,
+        max_attempts: int | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        """Create or replace the schedule `name` (the replacement for a Celery beat entry).
+
+        Give exactly one of every_seconds or cron (5 fields, e.g. "0 18 * * *", evaluated in tz).
+        A run is skipped while the previous job is still queued or running unless allow_overlap.
+        Re-sending an unchanged schedule keeps its next run time, so call this on every deploy."""
+        body: dict[str, Any] = {
+            "task_type": task_type,
+            "task_version": version,
+            "payload": dict(payload),
+            "timezone": tz,
+            "enabled": enabled,
+            "allow_overlap": allow_overlap,
+        }
+        optional = {
+            "interval_seconds": every_seconds,
+            "cron": cron,
+            "queue": queue,
+            "max_attempts": max_attempts,
+            "timeout_seconds": timeout_seconds,
+        }
+        body |= {k: v for k, v in optional.items() if v is not None}
+        return self._call("PUT", f"/v1/schedules/{name}", json=body)
+
+    def list_schedules(self) -> list[dict[str, Any]]:
+        """Every schedule of this tenant, ordered by name."""
+        return list(self._call("GET", "/v1/schedules")["items"])
+
+    def delete_schedule(self, name: str) -> None:
+        """Remove a schedule. Jobs it already submitted are unaffected."""
+        self._call("DELETE", f"/v1/schedules/{name}")
 
     def wait(self, job_id: str, timeout: float = 60.0, poll: float = 0.5) -> dict[str, Any]:
         """Poll until the job is succeeded, failed, or cancelled; TimeoutError after `timeout`

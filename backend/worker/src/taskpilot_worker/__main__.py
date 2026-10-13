@@ -75,7 +75,7 @@ async def _register(supervisor: Supervisor, hostname: str, stop: asyncio.Event) 
         try:
             await asyncio.wait_for(stop.wait(), delay)
             return False
-        except TimeoutError:
+        except asyncio.TimeoutError:  # not the builtin TimeoutError before Python 3.11
             delay = min(delay * 2, 30.0)
 
 

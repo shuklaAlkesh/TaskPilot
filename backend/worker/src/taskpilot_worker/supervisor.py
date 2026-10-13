@@ -89,7 +89,7 @@ async def _kill(proc: asyncio.subprocess.Process) -> None:
     proc.terminate()
     try:
         await asyncio.wait_for(proc.wait(), KILL_GRACE_SECONDS)
-    except TimeoutError:
+    except asyncio.TimeoutError:  # not the builtin TimeoutError before Python 3.11
         proc.kill()
         await proc.wait()
 
@@ -129,9 +129,14 @@ class Supervisor:
 
     async def run(self, stop: asyncio.Event) -> None:
         """Claim and run jobs until stop is set and in-flight attempts are finished or reported."""
-        async with asyncio.TaskGroup() as tg:
-            for _ in range(self._cfg.concurrency):
-                tg.create_task(self._slot(stop))
+        slots = [asyncio.create_task(self._slot(stop)) for _ in range(self._cfg.concurrency)]
+        try:
+            await asyncio.gather(*slots)
+        finally:
+            # Like asyncio.TaskGroup (Python 3.11+): a failing slot stops the others.
+            for slot in slots:
+                slot.cancel()
+            await asyncio.gather(*slots, return_exceptions=True)
 
     async def _slot(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -147,7 +152,7 @@ class Supervisor:
                     "claim response did not match the contract", extra={"error": "ValidationError"}
                 )
             if claim is None:
-                with contextlib.suppress(TimeoutError):
+                with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(stop.wait(), self._cfg.poll_interval)
                 continue
             await self.run_attempt(claim, stop)

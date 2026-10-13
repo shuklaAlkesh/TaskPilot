@@ -17,17 +17,19 @@ var (
 	ErrInvalidResult       = errors.New("invalid result")
 	ErrResultTooLarge      = errors.New("result too large")
 	ErrInvalidCursor       = errors.New("invalid cursor")
+	ErrScheduleNotFound    = errors.New("schedule not found")
 )
 
 // Validation codes carried by ValidationError.
 const (
-	CodeInvalidPayload = "invalid_payload"
-	CodeInvalidOptions = "invalid_options"
+	CodeInvalidPayload  = "invalid_payload"
+	CodeInvalidOptions  = "invalid_options"
+	CodeInvalidSchedule = "invalid_schedule"
 )
 
-// ValidationError lists field problems in a submit request.
+// ValidationError lists field problems in a submit or schedule request.
 type ValidationError struct {
-	Code   string // CodeInvalidPayload or CodeInvalidOptions
+	Code   string // CodeInvalidPayload, CodeInvalidOptions, or CodeInvalidSchedule
 	Fields []tasktypes.FieldError
 }
 
