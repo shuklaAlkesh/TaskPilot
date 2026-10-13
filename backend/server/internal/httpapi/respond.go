@@ -96,6 +96,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 	case errors.Is(err, jobs.ErrNotFound):
 		p.Status, p.Code, p.Title = http.StatusNotFound, "job_not_found", "Not found"
+	case errors.Is(err, jobs.ErrScheduleNotFound):
+		p.Status, p.Code, p.Title = http.StatusNotFound, "schedule_not_found", "Not found"
 	case errors.Is(err, jobs.ErrIdempotencyConflict):
 		p.Status, p.Code, p.Title = http.StatusConflict, "idempotency_key_conflict", "Idempotency key reused with a different request"
 	case errors.Is(err, jobs.ErrNotCancellable):

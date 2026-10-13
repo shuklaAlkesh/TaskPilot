@@ -19,7 +19,7 @@ import inspect
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, get_type_hints
+from typing import Any, TypeAlias, get_type_hints
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -48,7 +48,7 @@ class HandlerContext:
     deadline: float
 
 
-type Handler = Callable[[Any, HandlerContext], Mapping[str, Any]]
+Handler: TypeAlias = Callable[[Any, HandlerContext], Mapping[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)

@@ -122,23 +122,29 @@ type SubmitInput struct {
 	IdempotencyKey string
 }
 
-// Submit applies T1. It returns the job and whether it is an idempotent replay.
-func (s *Service) Submit(ctx context.Context, p auth.Principal, in SubmitInput) (Job, bool, error) {
+// prepare validates a job request against its registered task type and resolves the defaults.
+// Submit and scheduled runs both use it.
+func (s *Service) prepare(in SubmitInput) (maxAttempts, timeout int, queue string, err error) {
 	t, ok := s.types.Lookup(tasktypes.Key{TaskType: in.TaskType, TaskVersion: in.TaskVersion})
 	if !ok {
-		return Job{}, false, ErrUnknownTaskType
+		return 0, 0, "", ErrUnknownTaskType
 	}
 	if len(in.Payload) > MaxPayloadBytes {
-		return Job{}, false, ErrPayloadTooLarge
+		return 0, 0, "", ErrPayloadTooLarge
 	}
 	fields, err := t.Validate(in.Payload)
 	if err != nil {
-		return Job{}, false, err
+		return 0, 0, "", err
 	}
 	if len(fields) > 0 {
-		return Job{}, false, &ValidationError{Code: CodeInvalidPayload, Fields: fields}
+		return 0, 0, "", &ValidationError{Code: CodeInvalidPayload, Fields: fields}
 	}
-	maxAttempts, timeout, queue, err := s.resolveOptions(t, in)
+	return s.resolveOptions(t, in)
+}
+
+// Submit applies T1. It returns the job and whether it is an idempotent replay.
+func (s *Service) Submit(ctx context.Context, p auth.Principal, in SubmitInput) (Job, bool, error) {
+	maxAttempts, timeout, queue, err := s.prepare(in)
 	if err != nil {
 		return Job{}, false, err
 	}

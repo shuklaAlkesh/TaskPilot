@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from taskpilot_worker import child
@@ -20,7 +20,7 @@ def envelope(task_type: str = "system.echo", payload: dict[str, Any] | None = No
             "task_version": 1,
             "timeout_seconds": 10,
             "payload": {"message": "hi"} if payload is None else payload,
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
     ).encode()
 

@@ -17,6 +17,8 @@ servers:
     description: Local internal worker listener (never public)
 tags:
   - name: jobs
+  - name: schedules
+    description: Recurring jobs (the Celery beat replacement)
   - name: meta
   - name: health
   - name: worker
@@ -159,6 +161,92 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+
+  /v1/schedules:
+    get:
+      tags: [schedules]
+      operationId: listSchedules
+      summary: List the tenant's schedules (ordered by name)
+      description: Requires `jobs:read`.
+      responses:
+        '200':
+          description: Schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 1000
+                    items: { $ref: '#/components/schemas/Schedule' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+
+  /v1/schedules/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ScheduleName'
+    get:
+      tags: [schedules]
+      operationId: getSchedule
+      summary: Get one schedule
+      description: Requires `jobs:read`. Another tenant's schedule returns 404, same as a missing one.
+      responses:
+        '200':
+          description: The schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [schedules]
+      operationId: putSchedule
+      summary: Create or replace a schedule
+      description: |
+        Requires `jobs:write`. The payload and options are validated like a job submit, so the task
+        type must already be registered. Re-sending an unchanged timing keeps `next_run_at`, so
+        clients can sync schedules from code on every deploy. See docs/05-JOB-LIFECYCLE.md §11.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutScheduleRequest' }
+      responses:
+        '200':
+          description: Schedule replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '201':
+          description: Schedule created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schedule' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '415': { $ref: '#/components/responses/Problem' }
+        '422':
+          description: unknown_task_type, invalid_payload, invalid_options, or invalid_schedule
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [schedules]
+      operationId: deleteSchedule
+      summary: Delete a schedule (jobs it already submitted are unaffected)
+      description: Requires `jobs:write`.
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 
   /v1/task-types:
     get:
@@ -403,6 +491,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ScheduleName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9_.-]{0,99}$' }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -488,6 +581,60 @@ components:
         updated_at: { type: string, format: date-time }
         started_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
+
+    PutScheduleRequest:
+      type: object
+      additionalProperties: false
+      required: [task_type, task_version, payload]
+      description: Exactly one of interval_seconds and cron.
+      properties:
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer, minimum: 1 }
+        payload:
+          type: object
+          additionalProperties: true
+          description: Sent unchanged with every run; validated against the task type's JSON Schema.
+        queue: { $ref: '#/components/schemas/QueueName' }
+        interval_seconds: { type: integer, minimum: 5, maximum: 31536000, description: 'Runs every N seconds; the first run is N seconds after creation' }
+        cron: { type: string, maxLength: 100, description: '5-field cron ("0 18 * * *") or a descriptor (@hourly, @daily, @weekly, @monthly, @yearly)' }
+        timezone: { type: string, default: UTC, description: 'IANA zone the cron expression is evaluated in' }
+        enabled: { type: boolean, default: true }
+        allow_overlap: { type: boolean, default: false, description: 'false = skip a run while the previous job is still queued or running' }
+        max_attempts: { type: integer, minimum: 1, maximum: 10 }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 86400 }
+
+    Schedule:
+      type: object
+      required: [name, task_type, task_version, queue, payload, interval_seconds, cron, timezone, enabled,
+                 allow_overlap, max_attempts, timeout_seconds, next_run_at, last_run_at, last_job_id,
+                 last_error, created_at, updated_at]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9_.-]{0,99}$' }
+        task_type: { $ref: '#/components/schemas/TaskTypeName' }
+        task_version: { type: integer }
+        queue:
+          description: null = the task type's queue
+          oneOf:
+            - $ref: '#/components/schemas/QueueName'
+            - type: 'null'
+        payload: { type: object, additionalProperties: true }
+        interval_seconds: { type: [integer, 'null'] }
+        cron: { type: [string, 'null'] }
+        timezone: { type: string }
+        enabled: { type: boolean }
+        allow_overlap: { type: boolean }
+        max_attempts: { type: [integer, 'null'] }
+        timeout_seconds: { type: [integer, 'null'] }
+        next_run_at: { type: [string, 'null'], format: date-time, description: null while disabled }
+        last_run_at: { type: [string, 'null'], format: date-time, description: When a job was last submitted }
+        last_job_id: { type: [string, 'null'], format: uuid }
+        last_error:
+          description: Why the last run submitted no job (previous_run_active, unknown_task_type, invalid_payload, ...); null after a run that submitted a job
+          oneOf:
+            - $ref: '#/components/schemas/ErrorInfo'
+            - type: 'null'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     JobPage:
       type: object

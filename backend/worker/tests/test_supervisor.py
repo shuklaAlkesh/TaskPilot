@@ -3,7 +3,7 @@
 import asyncio
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -47,7 +47,7 @@ def make_claim(task_type: str, payload: dict[str, Any], timeout: int = 10) -> Cl
                 "task_version": 1,
                 "timeout_seconds": timeout,
                 "payload": payload,
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
         }
     )

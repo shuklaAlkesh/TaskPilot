@@ -59,3 +59,46 @@ def test_wait_polls_until_terminal() -> None:
 
     with client(handler) as tp:
         assert tp.wait("j1", poll=0)["status"] == "succeeded"
+
+
+def test_put_schedule_sends_only_the_given_options() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"name": "digest", "enabled": True})
+
+    with client(handler) as tp:
+        tp.put_schedule(
+            "digest",
+            "notifications.tasks.send_report_digest",
+            {},
+            cron="0 18 * * *",
+            tz="Asia/Kolkata",
+        )
+    [req] = seen
+    assert (req.method, req.url.path) == ("PUT", "/v1/schedules/digest")
+    assert json.loads(req.content) == {
+        "task_type": "notifications.tasks.send_report_digest",
+        "task_version": 1,
+        "payload": {},
+        "timezone": "Asia/Kolkata",
+        "enabled": True,
+        "allow_overlap": False,
+        "cron": "0 18 * * *",
+    }
+
+
+def test_list_and_delete_schedules() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(200, json={"items": [{"name": "heartbeat"}]})
+
+    with client(handler) as tp:
+        assert [s["name"] for s in tp.list_schedules()] == ["heartbeat"]
+        tp.delete_schedule("heartbeat")
+    assert seen == [("GET", "/v1/schedules"), ("DELETE", "/v1/schedules/heartbeat")]

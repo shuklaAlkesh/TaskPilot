@@ -24,6 +24,7 @@ type Config struct {
 	LeaseDuration        time.Duration
 	HeartbeatInterval    time.Duration
 	ReaperInterval       time.Duration
+	SchedulerInterval    time.Duration
 	AttemptDeadlineGrace time.Duration
 	RetryBase            time.Duration
 	RetryCap             time.Duration
@@ -58,6 +59,7 @@ func Load() (Config, error) {
 		LeaseDuration:        p.duration("TASKPILOT_LEASE_DURATION", 30*time.Second),
 		HeartbeatInterval:    p.duration("TASKPILOT_HEARTBEAT_INTERVAL", 10*time.Second),
 		ReaperInterval:       p.duration("TASKPILOT_REAPER_INTERVAL", 15*time.Second),
+		SchedulerInterval:    p.duration("TASKPILOT_SCHEDULER_INTERVAL", time.Second),
 		AttemptDeadlineGrace: p.duration("TASKPILOT_ATTEMPT_DEADLINE_GRACE", 30*time.Second),
 		RetryBase:            p.duration("TASKPILOT_RETRY_BASE", 5*time.Second),
 		RetryCap:             p.duration("TASKPILOT_RETRY_CAP", 10*time.Minute),
