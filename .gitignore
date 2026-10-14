@@ -7,8 +7,8 @@
 *.md
 *.MD
 docs/
-# To publish a file later, un-comment its exception, e.g.:
-# !/README.md
+!/README.md
+# To publish another file later, un-comment its exception, e.g.:
 # !/SECURITY.md
 
 # ---------- Secrets & local environment ----------
