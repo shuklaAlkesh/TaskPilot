@@ -26,15 +26,15 @@ func TestIsSessionToken(t *testing.T) {
 
 func TestLoginEmail(t *testing.T) {
 	t.Parallel()
-	m, err := loginEmail("dev+<x>@example.com", "565345", 10)
+	m, err := loginEmail("565345", 10)
 	require.NoError(t, err)
 	require.Equal(t, "565345 is your TaskPilot sign-in code", m.Subject)
-	require.Contains(t, m.Text, "Your sign-in code is 565345")
+	require.Contains(t, m.Text, "Your sign-in code: 565345")
 	require.Contains(t, m.Text, "expires in 10 minutes")
 	require.Contains(t, m.HTML, ">565345<")
+	require.Contains(t, m.HTML, "Expires in 10 minutes")
 	require.Contains(t, m.HTML, `src="cid:taskpilot-logo"`)
-	require.Contains(t, m.HTML, "dev&#43;&lt;x&gt;@example.com", "the address is HTML-escaped")
-	require.NotContains(t, m.HTML, "<x>")
+	require.NotContains(t, m.HTML+m.Text, "signing in as", "the email never repeats the recipient's address")
 }
 
 func TestCleanName(t *testing.T) {

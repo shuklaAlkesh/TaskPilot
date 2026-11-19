@@ -147,7 +147,7 @@ func (s *Service) RequestCode(ctx context.Context, rawEmail string) error {
 		id, userID, hash(id.String(), code), CodeTTL.Seconds()); err != nil {
 		return fmt.Errorf("store code: %w", err)
 	}
-	msg, err := loginEmail(email, code, int(CodeTTL.Minutes()))
+	msg, err := loginEmail(code, int(CodeTTL.Minutes()))
 	if err != nil {
 		return err
 	}
