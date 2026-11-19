@@ -4,12 +4,20 @@ import { describe, expect, it } from "vitest";
 import { seal, unseal, type Session } from "./session";
 
 const key = randomBytes(32);
-const session: Session = { apiKey: "tp_abcdefghijkl_secret", tenantName: "demo", scopes: ["jobs:read"], exp: Date.now() + 60_000 };
+const session: Session = {
+  token: "tps_sessionsecret",
+  email: "dev@example.com",
+  appId: "01a130f8-2a3c-7838-a73a-79cf358034fc",
+  tenantName: "demo",
+  scopes: ["jobs:read"],
+  exp: Date.now() + 60_000,
+};
 
 describe("session cookie", () => {
-  it("round-trips and never contains the key in clear text", () => {
+  it("round-trips and never contains the token or email in clear text", () => {
     const sealed = seal(session, key);
-    expect(sealed).not.toContain("tp_");
+    expect(sealed).not.toContain("tps_");
+    expect(sealed).not.toContain("example.com");
     expect(unseal(sealed, key)).toEqual(session);
   });
 

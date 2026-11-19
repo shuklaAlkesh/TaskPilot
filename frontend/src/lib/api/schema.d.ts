@@ -91,6 +91,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the tenant's schedules (ordered by name)
+         * @description Requires `jobs:read`.
+         */
+        get: operations["listSchedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/schedules/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ScheduleName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one schedule
+         * @description Requires `jobs:read`. Another tenant's schedule returns 404, same as a missing one.
+         */
+        get: operations["getSchedule"];
+        /**
+         * Create or replace a schedule
+         * @description Requires `jobs:write`. The payload and options are validated like a job submit, so the task
+         *     type must already be registered. Re-sending an unchanged timing keeps `next_run_at`, so
+         *     clients can sync schedules from code on every deploy. See docs/05-JOB-LIFECYCLE.md §11.
+         */
+        put: operations["putSchedule"];
+        post?: never;
+        /**
+         * Delete a schedule (jobs it already submitted are unaffected)
+         * @description Requires `jobs:write`.
+         */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/task-types": {
         parameters: {
             query?: never;
@@ -141,6 +193,105 @@ export interface paths {
         get: operations["getMe"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/login-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Email a one-time sign-in code
+         * @description Only invited emails (taskpilot-admin user invite) receive a code. The answer is the same for
+         *     every valid address, so it never reveals who is invited. At most one code per minute per user.
+         */
+        post: operations["requestLoginCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange the emailed code for a dashboard session
+         * @description A code expires after 10 minutes, works once, and stops working after 5 wrong guesses.
+         */
+        post: operations["createSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/sessions/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Sign out (revoke the presented session token) */
+        delete: operations["deleteSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Applications the signed-in user belongs to */
+        get: operations["listApps"];
+        put?: never;
+        /**
+         * Register an application and its first API key
+         * @description The signed-in user becomes a member. The API key (every scope) is shown once.
+         */
+        post: operations["createApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app_id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        /** The application's active API keys (never their secrets) */
+        get: operations["listAppKeys"];
+        put?: never;
+        /** Create an API key for the application (shown once) */
+        post: operations["createAppKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -356,6 +507,69 @@ export interface components {
             /** Format: date-time */
             finished_at: string | null;
         };
+        /** @description Exactly one of interval_seconds and cron. */
+        PutScheduleRequest: {
+            task_type: components["schemas"]["TaskTypeName"];
+            task_version: number;
+            /** @description Sent unchanged with every run; validated against the task type's JSON Schema. */
+            payload: {
+                [key: string]: unknown;
+            };
+            queue?: components["schemas"]["QueueName"];
+            /** @description Runs every N seconds; the first run is N seconds after creation */
+            interval_seconds?: number;
+            /** @description 5-field cron ("0 18 * * *") or a descriptor (@hourly, @daily, @weekly, @monthly, @yearly) */
+            cron?: string;
+            /**
+             * @description IANA zone the cron expression is evaluated in
+             * @default UTC
+             */
+            timezone: string;
+            /** @default true */
+            enabled: boolean;
+            /**
+             * @description false = skip a run while the previous job is still queued or running
+             * @default false
+             */
+            allow_overlap: boolean;
+            max_attempts?: number;
+            timeout_seconds?: number;
+        };
+        Schedule: {
+            name: string;
+            task_type: components["schemas"]["TaskTypeName"];
+            task_version: number;
+            /** @description null = the task type's queue */
+            queue: components["schemas"]["QueueName"] | null;
+            payload: {
+                [key: string]: unknown;
+            };
+            interval_seconds: number | null;
+            cron: string | null;
+            timezone: string;
+            enabled: boolean;
+            allow_overlap: boolean;
+            max_attempts: number | null;
+            timeout_seconds: number | null;
+            /**
+             * Format: date-time
+             * @description null while disabled
+             */
+            next_run_at: string | null;
+            /**
+             * Format: date-time
+             * @description When a job was last submitted
+             */
+            last_run_at: string | null;
+            /** Format: uuid */
+            last_job_id: string | null;
+            /** @description Why the last run submitted no job (previous_run_active, unknown_task_type, invalid_payload, ...); null after a run that submitted a job */
+            last_error: components["schemas"]["ErrorInfo"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         JobPage: {
             items: components["schemas"]["Job"][];
             next_cursor: string | null;
@@ -374,6 +588,8 @@ export interface components {
             }) | null;
         };
         TaskType: {
+            /** @description true: registered without an application, usable by every application. false: registered by this application's workers */
+            shared: boolean;
             task_type: components["schemas"]["TaskTypeName"];
             task_version: number;
             queue: components["schemas"]["QueueName"];
@@ -491,10 +707,51 @@ export interface components {
             /** Format: uuid */
             tenant_id: string;
             tenant_name: string;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description All zeros for a dashboard session
+             */
             key_id: string;
             key_name: string;
             scopes: ("jobs:read" | "jobs:write" | "jobs:cancel")[];
+            /**
+             * Format: uuid
+             * @description Set for a dashboard session
+             */
+            user_id?: string;
+            /** @description Set for a dashboard session */
+            user_email?: string;
+        };
+        Session: {
+            /** @description Bearer token (tps_...), shown once */
+            token: string;
+            /** Format: date-time */
+            expires_at: string;
+            email: string;
+        };
+        /** @description An application (tenant). Its jobs, schedules and task types are isolated from other applications. */
+        App: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ApiKey: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description The key starts with tp_<prefix>_ */
+            prefix: string;
+            scopes: ("jobs:read" | "jobs:write" | "jobs:cancel")[];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+        };
+        NewApiKey: components["schemas"]["ApiKey"] & {
+            /** @description The full API key (tp_<prefix>_<secret>). Shown once; store it now. */
+            key: string;
         };
         Readiness: {
             /** @enum {string} */
@@ -557,6 +814,12 @@ export interface components {
             concurrency: number;
             queues: components["schemas"]["QueueName"][];
             task_types: components["schemas"]["TaskTypeDefinition"][];
+            /**
+             * @description Optional application API key. Its task types then belong to that application: other
+             *     applications can't see or submit them. Without it they are shared (409 task_type_owned if
+             *     another application already owns one).
+             */
+            api_key?: string;
         };
         ClaimRequest: {
             worker_id: string;
@@ -674,6 +937,7 @@ export interface components {
     parameters: {
         JobId: string;
         AttemptId: string;
+        ScheduleName: string;
         /** @description Scoped per tenant; retained 24 h (provisional). */
         IdempotencyKey: string;
     };
@@ -842,6 +1106,128 @@ export interface operations {
             409: components["responses"]["Problem"];
         };
     };
+    listSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Schedules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Schedule"][];
+                    };
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    getSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ScheduleName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The schedule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    putSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ScheduleName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Schedule replaced */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            /** @description Schedule created */
+            201: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            413: components["responses"]["Problem"];
+            415: components["responses"]["Problem"];
+            /** @description unknown_task_type, invalid_payload, invalid_options, or invalid_schedule */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ScheduleName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
     listTaskTypes: {
         parameters: {
             query?: never;
@@ -909,6 +1295,199 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+        };
+    };
+    requestLoginCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description A code was sent if the email is invited */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        status: "sent_if_invited";
+                    };
+                };
+            };
+            400: components["responses"]["Problem"];
+        };
+    };
+    createSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+        };
+    };
+    deleteSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    listApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Applications */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        email: string;
+                        items: components["schemas"]["App"][];
+                    };
+                };
+            };
+            401: components["responses"]["Problem"];
+        };
+    };
+    createApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        app: components["schemas"]["App"];
+                        api_key: components["schemas"]["NewApiKey"];
+                    };
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+        };
+    };
+    listAppKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description API keys, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ApiKey"][];
+                    };
+                };
+            };
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    createAppKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewApiKey"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
         };
     };
     liveness: {

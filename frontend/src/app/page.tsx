@@ -29,8 +29,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     maxTimeoutSeconds: t.max_timeout_seconds,
     defaultMaxAttempts: t.default_max_attempts,
   }));
+  // Runnable tasks (a worker is online) first, so the form opens on something that will actually run.
+  options.sort((a, b) => Number(b.workersOnline > 0) - Number(a.workersOnline > 0));
   return (
     <Dashboard
+      appName={session.tenantName ?? "Dashboard"}
+      appId={session.appId ?? ""}
       initial={{ stats, recent: recent.items }}
       initialWindow={window}
       options={options}

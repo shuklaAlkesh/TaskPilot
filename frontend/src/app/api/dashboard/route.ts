@@ -5,13 +5,13 @@ import { getSession } from "@/lib/session";
 
 const WINDOWS = new Set(["15m", "1h", "6h", "24h"]);
 
-// Read-only proxy for the live dashboard: stats + the newest jobs. The API key stays on the server.
+// Read-only proxy for the live dashboard: stats + the newest jobs. The session token stays on the server.
 export async function GET(request: NextRequest) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ code: "unauthenticated" }, { status: 401 });
+  if (!session?.appId) return NextResponse.json({ code: "unauthenticated" }, { status: 401 });
   const window = request.nextUrl.searchParams.get("window") ?? "1h";
   if (!WINDOWS.has(window)) return NextResponse.json({ code: "invalid_request" }, { status: 400 });
-  const client = clientFor(session.apiKey);
+  const client = clientFor(session.token, session.appId);
   try {
     const [stats, recent] = await Promise.all([
       client.GET("/v1/stats", { params: { query: { window: window as "1h" } } }),
