@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* The dashboard is dark-first, so `dark:` styles follow the class on <html>, not the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --animate-flash-up: flash-up 0.9s ease-out;
+  --animate-flash-down: flash-down 0.9s ease-out;
+  --animate-flow: flow 1.2s linear infinite;
+}
+
+/* A changed number gets a brief soft glow behind it (indigo when it rose, slate when it fell).
+   The digits keep their text colour; box-shadow never affects layout. */
+@keyframes flash-up {
+  from { background-color: rgb(99 102 241 / 0.35); box-shadow: 0 0 0 4px rgb(99 102 241 / 0.35); }
+}
+@keyframes flash-down {
+  from { background-color: rgb(148 163 184 / 0.3); box-shadow: 0 0 0 4px rgb(148 163 184 / 0.3); }
+}
+/* Dashes travelling along a pipeline arrow while work is in flight. */
+@keyframes flow {
+  to { stroke-dashoffset: -12; }
+}
+
+/* Chart roles (dataviz reference palette, dark steps validated against the #18181b card surface). */
+:root {
+  color-scheme: dark;
+  --chart-surface: #18181b;
+  --chart-grid: #27272a;
+  --chart-text: #a1a1aa;
+  --series-completed: #3987e5; /* slot 1 blue */
+  --series-dead: #d95926; /* slot 2 orange */
+  --series-cancelled: #199e70; /* slot 3 aqua */
+  --series-submitted: #c98500; /* slot 4 yellow */
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
+
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-indigo-500;
+}
