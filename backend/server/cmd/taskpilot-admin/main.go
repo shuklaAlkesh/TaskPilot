@@ -6,6 +6,7 @@
 //	taskpilot-admin key revoke -id <uuid>
 //	taskpilot-admin tasktype list
 //	taskpilot-admin tasktype retire -type <task_type> -version <n>
+//	taskpilot-admin user invite -email <email> [-tenant <uuid>]
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/accounts"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/auth"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/store"
 )
@@ -34,7 +36,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: taskpilot-admin migrate up|status | tenant create | key create|revoke | tasktype list|retire")
+		return errors.New("usage: taskpilot-admin migrate up|status | tenant create | key create|revoke | tasktype list|retire | user invite")
 	}
 	cmd, flags := args[0]+" "+args[1], args[2:]
 	switch cmd {
@@ -50,6 +52,8 @@ func run(ctx context.Context, args []string) error {
 		return listTaskTypes(ctx)
 	case "tasktype retire":
 		return retireTaskType(ctx, flags)
+	case "user invite":
+		return inviteUser(ctx, flags)
 	}
 	return fmt.Errorf("unknown command %q", cmd)
 }
@@ -172,6 +176,39 @@ func revokeKey(ctx context.Context, args []string) error {
 		return fmt.Errorf("revoke key: %w", err)
 	}
 	fmt.Println("revoked:", tag.RowsAffected() == 1)
+	return nil
+}
+
+// inviteUser lets an email sign in to the dashboard, optionally as a member of an existing application.
+func inviteUser(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("user invite", flag.ContinueOnError)
+	email := fs.String("email", "", "email address that may sign in")
+	tenant := fs.String("tenant", "", "optional: application (tenant) id to add the user to")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var appID *uuid.UUID
+	if *tenant != "" {
+		id, err := uuid.Parse(*tenant)
+		if err != nil {
+			return errors.New("-tenant must be a UUID")
+		}
+		appID = &id
+	}
+	pool, err := open(ctx, "DATABASE_URL")
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	id, err := accounts.New(pool, nil).Invite(ctx, *email, appID)
+	if err != nil {
+		return fmt.Errorf("invite: %w", err)
+	}
+	fmt.Println("user id:", id)
+	if appID != nil {
+		fmt.Println("member of application:", *appID)
+	}
+	fmt.Println("they can now sign in to the dashboard with this email")
 	return nil
 }
 

@@ -18,6 +18,8 @@ class Config:
 
     api_url: str
     worker_token: str = field(repr=False)
+    # Optional application API key: this worker's task types then belong to that application only.
+    api_key: str = field(default="", repr=False)
     app: str = BUILTIN_APP
     queues: tuple[str, ...] = ()  # empty = every queue the app's tasks route to
     child_env_allow: tuple[str, ...] = ()
@@ -36,6 +38,7 @@ class Config:
         cfg = cls(
             api_url=env["TASKPILOT_API_INTERNAL_URL"],
             worker_token=env["TASKPILOT_WORKER_TOKEN"],
+            api_key=env.get("TASKPILOT_API_KEY", ""),
             app=env.get("TASKPILOT_WORKER_APP") or BUILTIN_APP,
             queues=_csv(env.get("TASKPILOT_WORKER_QUEUES", "")),
             child_env_allow=_csv(env.get("TASKPILOT_WORKER_CHILD_ENV", "")),
@@ -45,6 +48,11 @@ class Config:
         )
         if cfg.concurrency < 1:
             raise ValueError("TASKPILOT_WORKER_CONCURRENCY must be >= 1")
-        if any(name.startswith("TASKPILOT_WORKER_TOKEN") for name in cfg.child_env_allow):
-            raise ValueError("TASKPILOT_WORKER_CHILD_ENV must not include the worker token")
+        if any(
+            name.startswith("TASKPILOT_WORKER_TOKEN") or name == "TASKPILOT_API_KEY"
+            for name in cfg.child_env_allow
+        ):
+            raise ValueError(
+                "TASKPILOT_WORKER_CHILD_ENV must not include the worker token or the API key"
+            )
         return cfg

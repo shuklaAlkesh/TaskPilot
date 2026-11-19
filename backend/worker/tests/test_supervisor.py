@@ -143,12 +143,31 @@ def test_register_announces_every_task_type_and_queue() -> None:
     [body] = sent
     assert body["queues"] == ["default"]
     assert body["concurrency"] == 2
+    assert "api_key" not in body  # no key: the task types are shared
     assert [t["task_type"] for t in body["task_types"]] == [
         "data.csv_summary",
         "system.echo",
         "system.sleep",
         "text.word_count",
     ]
+
+
+def test_register_with_api_key_names_the_application() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"registered": 4})
+
+    async def go() -> None:
+        client = WorkerClient("http://api", "token", transport=httpx.MockTransport(capture))
+        cfg = Config(api_url="http://api", worker_token="token", api_key="tp_key")
+        await Supervisor(cfg, client, "w-1", registry).register("host-a", "0.1.0")
+        await client.aclose()
+
+    asyncio.run(go())
+    assert sent[0]["api_key"] == "tp_key"
+    assert "tp_key" not in repr(Config(api_url="x", worker_token="t", api_key="tp_key"))
 
 
 def test_child_env_passes_only_allow_listed_variables(monkeypatch: Any) -> None:
@@ -161,6 +180,18 @@ def test_child_env_passes_only_allow_listed_variables(monkeypatch: Any) -> None:
     assert env["TASKPILOT_WORKER_APP"] == cfg.app
     assert "UNRELATED_SECRET" not in env
     assert "never-in-child" not in env.values()
+
+
+def test_config_reads_api_key_and_keeps_it_out_of_children() -> None:
+    env = {"TASKPILOT_API_INTERNAL_URL": "http://api", "TASKPILOT_WORKER_TOKEN": "t"}
+    assert Config.from_env(env).api_key == ""
+    assert Config.from_env({**env, "TASKPILOT_API_KEY": "tp_key"}).api_key == "tp_key"
+    try:
+        Config.from_env({**env, "TASKPILOT_WORKER_CHILD_ENV": "TASKPILOT_API_KEY"})
+    except ValueError as e:
+        assert "API key" in str(e)
+    else:
+        raise AssertionError("the API key must never be passed to handler subprocesses")
 
 
 def test_bad_claim_response_does_not_kill_the_worker() -> None:

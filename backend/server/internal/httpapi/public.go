@@ -211,7 +211,8 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, p auth.Princi
 	writeJSON(w, status, newJobView(job, true))
 }
 
-func (s *Server) listTaskTypes(w http.ResponseWriter, r *http.Request, _ auth.Principal) {
+// listTaskTypes lists the task types this application can submit: its own and shared ones.
+func (s *Server) listTaskTypes(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	online, err := s.jobs.WorkersOnlineByTaskType(r.Context())
 	if err != nil {
 		writeError(w, r, err)
@@ -232,9 +233,13 @@ func (s *Server) listTaskTypes(w http.ResponseWriter, r *http.Request, _ auth.Pr
 		Idempotent            bool            `json:"idempotent"`
 		SideEffects           bool            `json:"side_effects"`
 		TestOnly              bool            `json:"test_only"`
+		Shared                bool            `json:"shared"`
 	}
-	var items []view
+	items := []view{}
 	for _, t := range s.types.List() {
+		if !t.VisibleTo(p.TenantID) {
+			continue
+		}
 		example := t.Example
 		if example == nil {
 			example = json.RawMessage("null")
@@ -244,7 +249,7 @@ func (s *Server) listTaskTypes(w http.ResponseWriter, r *http.Request, _ auth.Pr
 			Title: t.Title, Description: t.Description, PayloadSchema: t.PayloadSchema, Example: example,
 			DefaultTimeoutSeconds: t.DefaultTimeoutSeconds, MaxTimeoutSeconds: t.MaxTimeoutSeconds,
 			DefaultMaxAttempts: t.DefaultMaxAttempts,
-			Idempotent:         t.Idempotent, SideEffects: t.SideEffects, TestOnly: t.TestOnly,
+			Idempotent:         t.Idempotent, SideEffects: t.SideEffects, TestOnly: t.TestOnly, Shared: t.TenantID == nil,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})

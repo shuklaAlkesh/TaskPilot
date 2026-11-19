@@ -127,7 +127,7 @@ func (t timing) next(prev, now time.Time) time.Time {
 // Re-sending an unchanged timing keeps the next run time, so callers can sync schedules from code
 // on every deploy without shifting them.
 func (s *Service) PutSchedule(ctx context.Context, p auth.Principal, in ScheduleInput) (Schedule, bool, error) {
-	if _, _, _, err := s.prepare(SubmitInput{TaskType: in.TaskType, TaskVersion: in.TaskVersion, Payload: in.Payload,
+	if _, _, _, err := s.prepare(p.TenantID, SubmitInput{TaskType: in.TaskType, TaskVersion: in.TaskVersion, Payload: in.Payload,
 		MaxAttempts: in.MaxAttempts, TimeoutSeconds: in.TimeoutSeconds, Queue: in.Queue}); err != nil {
 		return Schedule{}, false, err
 	}
@@ -330,7 +330,7 @@ func (s *Service) submitScheduled(ctx context.Context, tx pgx.Tx, sc Schedule) (
 	if sc.Queue != nil {
 		in.Queue = *sc.Queue
 	}
-	maxAttempts, timeout, queue, err := s.prepare(in)
+	maxAttempts, timeout, queue, err := s.prepare(sc.TenantID, in)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -355,9 +355,10 @@ func (s *Service) submitScheduled(ctx context.Context, tx pgx.Tx, sc Schedule) (
 }
 
 func auditSchedule(ctx context.Context, tx pgx.Tx, p auth.Principal, action, name string) error {
+	actorType, actorID := p.Actor()
 	_, err := tx.Exec(ctx, `
 		INSERT INTO audit_events (tenant_id, actor_type, actor_id, action, metadata)
-		VALUES ($1, 'api_key', $2, $3, jsonb_build_object('schedule', $4::text))`, p.TenantID, p.KeyID.String(), action, name)
+		VALUES ($1, $2, $3, $4, jsonb_build_object('schedule', $5::text))`, p.TenantID, actorType, actorID, action, name)
 	if err != nil {
 		return fmt.Errorf("audit %s: %w", action, err)
 	}

@@ -290,9 +290,10 @@ func (s *Service) Stats(ctx context.Context, p auth.Principal, window string) (S
 					EXTRACT(EPOCH FROM now() - min(available_at) FILTER (WHERE status = 'queued' AND available_at <= now())) * 1000 AS lag
 				FROM jobs WHERE tenant_id = $1 AND status IN ('queued', 'running') GROUP BY queue
 			), t AS (
-				SELECT queue, count(*) AS n FROM task_types GROUP BY queue
+				SELECT queue, count(*) AS n FROM task_types WHERE tenant_id IS NULL OR tenant_id = $1 GROUP BY queue
 			), q AS (
-				SELECT queue FROM w UNION SELECT queue FROM j UNION SELECT queue FROM t
+				-- Only queues this tenant uses (its jobs or its visible task types), never other applications' queues.
+				SELECT queue FROM j UNION SELECT queue FROM t
 			)
 			SELECT q.queue, COALESCE(j.ready, 0), COALESCE(j.delayed, 0), COALESCE(j.running, 0), j.lag,
 				COALESCE(w.workers, 0), COALESCE(w.slots, 0), COALESCE(t.n, 0)

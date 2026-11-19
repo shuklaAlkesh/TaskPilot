@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -35,6 +36,9 @@ var (
 
 	// ErrSchemaConflict: the version already exists with a different schema while jobs still use it.
 	ErrSchemaConflict = errors.New("task type version already registered with a different schema")
+
+	// ErrOwnerConflict: the task type already belongs to another application.
+	ErrOwnerConflict = errors.New("task type is registered by another application")
 )
 
 // ValidQueue reports whether q is a valid queue name.
@@ -62,6 +66,13 @@ type Definition struct {
 	Idempotent            bool            `json:"idempotent"`
 	SideEffects           bool            `json:"side_effects"`
 	TestOnly              bool            `json:"test_only"`
+	// TenantID is the owning application; nil means shared. Set by the API, never by the worker body.
+	TenantID *uuid.UUID `json:"-"`
+}
+
+// VisibleTo reports whether an application may see and submit this task type.
+func (d *Definition) VisibleTo(tenant uuid.UUID) bool {
+	return d.TenantID == nil || *d.TenantID == tenant
 }
 
 // FieldError is one validation failure, located by JSON Pointer.
@@ -218,7 +229,7 @@ func NewRegistry(pool *pgxpool.Pool, enableTest bool) *Registry {
 }
 
 const definitionColumns = `task_type, task_version, queue, title, description, payload_schema, example,
-	default_timeout_seconds, max_timeout_seconds, default_max_attempts, idempotent, side_effects, test_only`
+	default_timeout_seconds, max_timeout_seconds, default_max_attempts, idempotent, side_effects, test_only, tenant_id`
 
 // Refresh reloads every task type. Unchanged schemas keep their compiled form.
 func (r *Registry) Refresh(ctx context.Context) error {
@@ -229,7 +240,7 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	defs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Definition, error) {
 		var d Definition
 		err := row.Scan(&d.TaskType, &d.TaskVersion, &d.Queue, &d.Title, &d.Description, &d.PayloadSchema, &d.Example,
-			&d.DefaultTimeoutSeconds, &d.MaxTimeoutSeconds, &d.DefaultMaxAttempts, &d.Idempotent, &d.SideEffects, &d.TestOnly)
+			&d.DefaultTimeoutSeconds, &d.MaxTimeoutSeconds, &d.DefaultMaxAttempts, &d.Idempotent, &d.SideEffects, &d.TestOnly, &d.TenantID)
 		return d, err
 	})
 	if err != nil {
@@ -281,10 +292,18 @@ func (r *Registry) Run(ctx context.Context, interval time.Duration, onErr func(e
 	}
 }
 
-// Register validates and stores definitions from one worker, then refreshes this replica.
+// Register stores shared task types (visible to every application). See RegisterFor.
+func (r *Registry) Register(ctx context.Context, workerID string, defs []Definition) error {
+	return r.RegisterFor(ctx, workerID, nil, defs)
+}
+
+// RegisterFor validates and stores definitions from one worker, then refreshes this replica.
+// owner is the application the worker serves (nil = shared). A shared task type is claimed by the
+// first application that registers it; one owned by an application can't be re-registered by
+// another, or as shared (ErrOwnerConflict).
 // Metadata (title, queue, limits) may change freely. A schema may change for an existing version
 // only while no queued or running job uses that version; otherwise ErrSchemaConflict.
-func (r *Registry) Register(ctx context.Context, workerID string, defs []Definition) error {
+func (r *Registry) RegisterFor(ctx context.Context, workerID string, owner *uuid.UUID, defs []Definition) error {
 	compiled := make([]*TaskType, 0, len(defs))
 	for _, d := range defs {
 		t, err := compile(d)
@@ -296,10 +315,14 @@ func (r *Registry) Register(ctx context.Context, workerID string, defs []Definit
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		for _, t := range compiled {
 			var stored []byte
-			err := tx.QueryRow(ctx, `SELECT schema_sha256 FROM task_types WHERE task_type = $1 AND task_version = $2 FOR UPDATE`,
-				t.TaskType, t.TaskVersion).Scan(&stored)
+			var storedOwner *uuid.UUID
+			err := tx.QueryRow(ctx, `SELECT schema_sha256, tenant_id FROM task_types WHERE task_type = $1 AND task_version = $2 FOR UPDATE`,
+				t.TaskType, t.TaskVersion).Scan(&stored, &storedOwner)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("load %s: %w", t.Key, err)
+			}
+			if storedOwner != nil && (owner == nil || *owner != *storedOwner) {
+				return fmt.Errorf("%w: %s", ErrOwnerConflict, t.Key)
 			}
 			if stored != nil && !bytes.Equal(stored, t.hash) {
 				var inUse bool
@@ -317,8 +340,8 @@ func (r *Registry) Register(ctx context.Context, workerID string, defs []Definit
 			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO task_types (`+definitionColumns+`, schema_sha256, registered_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-				ON CONFLICT (task_type, task_version) DO UPDATE SET
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+				ON CONFLICT (task_type, task_version) DO UPDATE SET tenant_id = EXCLUDED.tenant_id,
 					queue = EXCLUDED.queue, title = EXCLUDED.title, description = EXCLUDED.description,
 					payload_schema = EXCLUDED.payload_schema, example = EXCLUDED.example,
 					default_timeout_seconds = EXCLUDED.default_timeout_seconds,
@@ -328,7 +351,7 @@ func (r *Registry) Register(ctx context.Context, workerID string, defs []Definit
 					schema_sha256 = EXCLUDED.schema_sha256, registered_by = EXCLUDED.registered_by, updated_at = now()`,
 				t.TaskType, t.TaskVersion, t.Queue, t.Title, t.Description, t.PayloadSchema, example,
 				t.DefaultTimeoutSeconds, t.MaxTimeoutSeconds, t.DefaultMaxAttempts, t.Idempotent, t.SideEffects, t.TestOnly,
-				t.hash, workerID); err != nil {
+				owner, t.hash, workerID); err != nil {
 				return fmt.Errorf("store %s: %w", t.Key, err)
 			}
 		}
@@ -346,6 +369,15 @@ func (r *Registry) Lookup(k Key) (*TaskType, bool) {
 	defer r.mu.RUnlock()
 	t, ok := r.types[k]
 	return t, ok
+}
+
+// LookupFor returns the enabled task type for k if the application may use it.
+func (r *Registry) LookupFor(tenant uuid.UUID, k Key) (*TaskType, bool) {
+	t, ok := r.Lookup(k)
+	if !ok || !t.VisibleTo(tenant) {
+		return nil, false
+	}
+	return t, true
 }
 
 // List returns the enabled task types ordered by name and version.

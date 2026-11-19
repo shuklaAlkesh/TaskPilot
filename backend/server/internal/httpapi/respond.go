@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/accounts"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/auth"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/jobs"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/tasktypes"
@@ -91,6 +92,19 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tasktypes.ErrSchemaConflict):
 		p.Status, p.Code, p.Title, p.Detail = http.StatusConflict, "task_type_conflict",
 			"Task type version already registered with a different schema", err.Error()
+	case errors.Is(err, tasktypes.ErrOwnerConflict):
+		p.Status, p.Code, p.Title, p.Detail = http.StatusConflict, "task_type_owned",
+			"Task type is registered by another application", err.Error()
+	case errors.Is(err, accounts.ErrInvalidEmail):
+		p.Status, p.Code, p.Title = http.StatusBadRequest, "invalid_email", "Enter a valid email address"
+	case errors.Is(err, accounts.ErrInvalidCode):
+		p.Status, p.Code, p.Title = http.StatusUnauthorized, "invalid_code", "That code is wrong or has expired"
+	case errors.Is(err, accounts.ErrNotMember):
+		p.Status, p.Code, p.Title = http.StatusNotFound, "app_not_found", "Application not found"
+	case errors.Is(err, accounts.ErrInvalidName):
+		p.Status, p.Code, p.Title = http.StatusBadRequest, "invalid_request", "Name must be 1-100 characters"
+	case errors.Is(err, accounts.ErrNameTaken):
+		p.Status, p.Code, p.Title = http.StatusConflict, "app_name_taken", "An application with that name already exists"
 	case errors.Is(err, auth.ErrUnauthenticated):
 		p.Status, p.Code, p.Title = http.StatusUnauthorized, "unauthenticated", "Missing or invalid credentials"
 		w.Header().Set("WWW-Authenticate", "Bearer")

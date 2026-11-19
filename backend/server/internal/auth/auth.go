@@ -39,12 +39,23 @@ const (
 )
 
 // Principal is the authenticated caller. TenantID is the only tenant any query may use.
+// It is either an API key, or a dashboard user acting on one application (UserID set, KeyID zero).
 type Principal struct {
-	TenantID   uuid.UUID `json:"tenant_id"`
-	TenantName string    `json:"tenant_name"`
-	KeyID      uuid.UUID `json:"key_id"`
-	KeyName    string    `json:"key_name"`
-	Scopes     []string  `json:"scopes"`
+	TenantID   uuid.UUID  `json:"tenant_id"`
+	TenantName string     `json:"tenant_name"`
+	KeyID      uuid.UUID  `json:"key_id"`
+	KeyName    string     `json:"key_name"`
+	Scopes     []string   `json:"scopes"`
+	UserID     *uuid.UUID `json:"user_id,omitempty"`
+	UserEmail  string     `json:"user_email,omitempty"`
+}
+
+// Actor names the caller for audit_events: ("user", user id) or ("api_key", key id).
+func (p Principal) Actor() (actorType, actorID string) {
+	if p.UserID != nil {
+		return "user", p.UserID.String()
+	}
+	return "api_key", p.KeyID.String()
 }
 
 // NewKey generates a key. The full key is shown once; only prefix and SHA-256(secret) are stored.

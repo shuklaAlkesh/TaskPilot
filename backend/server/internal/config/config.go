@@ -33,6 +33,12 @@ type Config struct {
 	IdempotencyTTL       time.Duration
 	ShutdownReadyDelay   time.Duration
 	ShutdownTimeout      time.Duration
+	// Dashboard sign-in emails. Without SMTPHost, development logs the code instead of sending it.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 // LogValue redacts secrets so a Config can be logged safely.
@@ -43,6 +49,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("worker_api_addr", c.WorkerAPIAddr),
 		slog.Bool("enable_test_tasks", c.EnableTestTasks),
 		slog.Duration("lease", c.LeaseDuration),
+		slog.Bool("smtp", c.SMTPHost != ""),
 	)
 }
 
@@ -68,6 +75,17 @@ func Load() (Config, error) {
 		IdempotencyTTL:       p.duration("TASKPILOT_IDEMPOTENCY_TTL", 24*time.Hour),
 		ShutdownReadyDelay:   p.duration("TASKPILOT_SHUTDOWN_READY_DELAY", 5*time.Second),
 		ShutdownTimeout:      p.duration("TASKPILOT_SHUTDOWN_TIMEOUT", 20*time.Second),
+		SMTPHost:             p.str("TASKPILOT_SMTP_HOST", ""),
+		SMTPPort:             p.integer("TASKPILOT_SMTP_PORT", 587),
+		SMTPUsername:         p.str("TASKPILOT_SMTP_USERNAME", ""),
+		SMTPPassword:         p.str("TASKPILOT_SMTP_PASSWORD", ""),
+		SMTPFrom:             p.str("TASKPILOT_SMTP_FROM", ""),
+	}
+	if c.SMTPHost == "" && c.Env != "development" {
+		p.errs = append(p.errs, errors.New("TASKPILOT_SMTP_HOST: required outside development (dashboard sign-in codes are emailed)"))
+	}
+	if c.SMTPHost != "" && c.SMTPFrom == "" {
+		p.errs = append(p.errs, errors.New("TASKPILOT_SMTP_FROM: required when TASKPILOT_SMTP_HOST is set"))
 	}
 	c.WorkerTokens = []string{p.required("TASKPILOT_WORKER_TOKEN")}
 	if prev := p.str("TASKPILOT_WORKER_TOKEN_PREVIOUS", ""); prev != "" {
