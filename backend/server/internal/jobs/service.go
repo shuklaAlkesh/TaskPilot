@@ -123,9 +123,9 @@ type SubmitInput struct {
 }
 
 // prepare validates a job request against its registered task type and resolves the defaults.
-// Submit and scheduled runs both use it.
-func (s *Service) prepare(in SubmitInput) (maxAttempts, timeout int, queue string, err error) {
-	t, ok := s.types.Lookup(tasktypes.Key{TaskType: in.TaskType, TaskVersion: in.TaskVersion})
+// Submit and scheduled runs both use it. Task types owned by another application count as unknown.
+func (s *Service) prepare(tenant uuid.UUID, in SubmitInput) (maxAttempts, timeout int, queue string, err error) {
+	t, ok := s.types.LookupFor(tenant, tasktypes.Key{TaskType: in.TaskType, TaskVersion: in.TaskVersion})
 	if !ok {
 		return 0, 0, "", ErrUnknownTaskType
 	}
@@ -144,7 +144,7 @@ func (s *Service) prepare(in SubmitInput) (maxAttempts, timeout int, queue strin
 
 // Submit applies T1. It returns the job and whether it is an idempotent replay.
 func (s *Service) Submit(ctx context.Context, p auth.Principal, in SubmitInput) (Job, bool, error) {
-	maxAttempts, timeout, queue, err := s.prepare(in)
+	maxAttempts, timeout, queue, err := s.prepare(p.TenantID, in)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -695,9 +695,10 @@ func queryJob(ctx context.Context, q querier, sql string, args ...any) (Job, err
 }
 
 func audit(ctx context.Context, tx pgx.Tx, p auth.Principal, action string, jobID uuid.UUID) error {
+	actorType, actorID := p.Actor()
 	_, err := tx.Exec(ctx, `
 		INSERT INTO audit_events (tenant_id, actor_type, actor_id, action, job_id)
-		VALUES ($1, 'api_key', $2, $3, $4)`, p.TenantID, p.KeyID.String(), action, jobID)
+		VALUES ($1, $2, $3, $4, $5)`, p.TenantID, actorType, actorID, action, jobID)
 	if err != nil {
 		return fmt.Errorf("audit %s: %w", action, err)
 	}

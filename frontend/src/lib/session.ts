@@ -5,16 +5,19 @@ import { cookies } from "next/headers";
 
 import { SESSION_COOKIE } from "@/lib/session-cookie";
 
-// BFF session (docs/16-FRONTEND.md §4): the API key lives only inside this encrypted, HttpOnly cookie.
-const MAX_AGE_SECONDS = 8 * 60 * 60;
+// BFF session (docs/16-FRONTEND.md §4): the dashboard session token from the Go API (issued after email
+// sign-in) lives only inside this encrypted, HttpOnly cookie, with the application the user is viewing.
+// API keys are never stored here: they are only for application-to-TaskPilot calls.
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 export type Session = {
-  apiKey: string;
-  tenantName: string;
-  scopes: string[];
-  exp: number; // epoch milliseconds
+  token: string; // tps_… dashboard session token
+  email: string;
+  exp: number; // epoch milliseconds, the Go session's expiry
+  appId?: string; // the selected application (tenant)
+  tenantName?: string;
+  scopes: string[]; // what the user may do on the selected application ([] until one is selected)
 };
 
 function secretKey(): Buffer {
@@ -55,15 +58,15 @@ export async function getSession(): Promise<Session | null> {
   return value ? unseal(value) : null;
 }
 
-export async function startSession(apiKey: string, tenantName: string, scopes: string[]) {
-  const exp = Date.now() + MAX_AGE_SECONDS * 1000;
-  (await cookies()).set(SESSION_COOKIE, seal({ apiKey, tenantName, scopes, exp }), {
+/** Writes the session cookie; it expires together with the Go session. */
+export async function saveSession(session: Session) {
+  (await cookies()).set(SESSION_COOKIE, seal(session), {
     httpOnly: true,
     // Browsers treat http://localhost as secure, but `next dev` users may use a LAN IP.
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     path: "/",
-    maxAge: MAX_AGE_SECONDS,
+    maxAge: Math.max(0, Math.floor((session.exp - Date.now()) / 1000)),
   });
 }
 

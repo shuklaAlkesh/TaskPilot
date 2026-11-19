@@ -23,9 +23,12 @@ tags:
   - name: health
   - name: worker
     description: Internal worker API (private network, worker token)
+  - name: dashboard
+    description: Email sign-in for the dashboard, and the signed-in user's applications and API keys
 
 security:
   - apiKey: []
+  - session: []
 
 paths:
   /v1/jobs:
@@ -303,6 +306,167 @@ paths:
               schema: { $ref: '#/components/schemas/Me' }
         '401': { $ref: '#/components/responses/Problem' }
 
+  /v1/auth/login-codes:
+    post:
+      tags: [dashboard]
+      operationId: requestLoginCode
+      summary: Email a one-time sign-in code
+      description: |
+        Only invited emails (taskpilot-admin user invite) receive a code. The answer is the same for
+        every valid address, so it never reveals who is invited. At most one code per minute per user.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202':
+          description: A code was sent if the email is invited
+          content:
+            application/json:
+              schema: { type: object, required: [status], properties: { status: { type: string, const: sent_if_invited } } }
+        '400': { $ref: '#/components/responses/Problem' }
+
+  /v1/auth/sessions:
+    post:
+      tags: [dashboard]
+      operationId: createSession
+      summary: Exchange the emailed code for a dashboard session
+      description: A code expires after 10 minutes, works once, and stops working after 5 wrong guesses.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, code]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '201':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /v1/auth/sessions/current:
+    delete:
+      tags: [dashboard]
+      operationId: deleteSession
+      summary: Sign out (revoke the presented session token)
+      security: [{ session: [] }]
+      responses:
+        '204': { description: Signed out }
+        '401': { $ref: '#/components/responses/Problem' }
+
+  /v1/apps:
+    get:
+      tags: [dashboard]
+      operationId: listApps
+      summary: Applications the signed-in user belongs to
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Applications
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email, items]
+                properties:
+                  email: { type: string }
+                  items: { type: array, items: { $ref: '#/components/schemas/App' } }
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [dashboard]
+      operationId: createApp
+      summary: Register an application and its first API key
+      description: The signed-in user becomes a member. The API key (every scope) is shown once.
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [app, api_key]
+                properties:
+                  app: { $ref: '#/components/schemas/App' }
+                  api_key: { $ref: '#/components/schemas/NewApiKey' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+
+  /v1/apps/{app_id}/keys:
+    parameters:
+      - name: app_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [dashboard]
+      operationId: listAppKeys
+      summary: The application's active API keys (never their secrets)
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: API keys, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ApiKey' } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [dashboard]
+      operationId: createAppKey
+      summary: Create an API key for the application (shown once)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NewApiKey' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+
   /healthz:
     get:
       tags: [health]
@@ -471,6 +635,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: 'tp_<12 char prefix>_<43 char secret>'
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: 'tps_<43 char secret>'
+      description: |
+        Dashboard session from POST /v1/auth/sessions. On the job, schedule, task-type and stats
+        endpoints, also send `X-TaskPilot-App: <application id>`; the user acts on that application
+        with every scope.
     workerToken:
       type: http
       scheme: bearer
@@ -665,8 +837,9 @@ components:
     TaskType:
       type: object
       required: [task_type, task_version, queue, workers_online, title, description, payload_schema, example, default_timeout_seconds,
-                 max_timeout_seconds, default_max_attempts, idempotent, side_effects, test_only]
+                 max_timeout_seconds, default_max_attempts, idempotent, side_effects, test_only, shared]
       properties:
+        shared: { type: boolean, description: 'true: registered without an application, usable by every application. false: registered by this application''s workers' }
         task_type: { $ref: '#/components/schemas/TaskTypeName' }
         task_version: { type: integer }
         queue: { $ref: '#/components/schemas/QueueName' }
@@ -787,11 +960,49 @@ components:
       properties:
         tenant_id: { type: string, format: uuid }
         tenant_name: { type: string }
-        key_id: { type: string, format: uuid }
+        key_id: { type: string, format: uuid, description: All zeros for a dashboard session }
         key_name: { type: string }
         scopes:
           type: array
           items: { type: string, enum: ['jobs:read', 'jobs:write', 'jobs:cancel'] }
+        user_id: { type: string, format: uuid, description: Set for a dashboard session }
+        user_email: { type: string, description: Set for a dashboard session }
+
+    Session:
+      type: object
+      required: [token, expires_at, email]
+      properties:
+        token: { type: string, description: 'Bearer token (tps_...), shown once' }
+        expires_at: { type: string, format: date-time }
+        email: { type: string }
+
+    App:
+      type: object
+      description: An application (tenant). Its jobs, schedules and task types are isolated from other applications.
+      required: [id, name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ApiKey:
+      type: object
+      required: [id, name, prefix, scopes, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: 'The key starts with tp_<prefix>_' }
+        scopes: { type: array, items: { type: string, enum: ['jobs:read', 'jobs:write', 'jobs:cancel'] } }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+
+    NewApiKey:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          required: [key]
+          properties:
+            key: { type: string, description: 'The full API key (tp_<prefix>_<secret>). Shown once; store it now.' }
 
     Readiness:
       type: object
@@ -858,6 +1069,12 @@ components:
         concurrency: { type: integer, minimum: 1, maximum: 1024 }
         queues: { type: array, minItems: 1, maxItems: 50, items: { $ref: '#/components/schemas/QueueName' } }
         task_types: { type: array, minItems: 1, maxItems: 500, items: { $ref: '#/components/schemas/TaskTypeDefinition' } }
+        api_key:
+          type: string
+          description: |
+            Optional application API key. Its task types then belong to that application: other
+            applications can't see or submit them. Without it they are shared (409 task_type_owned if
+            another application already owns one).
 
     ClaimRequest:
       type: object

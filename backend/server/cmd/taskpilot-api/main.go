@@ -15,9 +15,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/accounts"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/config"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/httpapi"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/jobs"
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/mail"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/reaper"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/store"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/tasktypes"
@@ -64,7 +66,11 @@ func run() error {
 		MaxScheduleAhead:   cfg.MaxScheduleAhead,
 		IdempotencyTTL:     cfg.IdempotencyTTL,
 	})
-	api := httpapi.New(svc, types, pool, cfg.WorkerTokens, log)
+	var sender mail.Sender = mail.Log{Logger: log} // development without SMTP (config.Load enforces SMTP elsewhere)
+	if cfg.SMTPHost != "" {
+		sender = mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.SMTPFrom}
+	}
+	api := httpapi.New(svc, types, accounts.New(pool, sender), pool, cfg.WorkerTokens, log)
 	public := newServer(cfg.HTTPAddr, api.PublicHandler())
 	internal := newServer(cfg.WorkerAPIAddr, api.WorkerHandler())
 

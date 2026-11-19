@@ -6,7 +6,7 @@ import { formatCount } from "@/lib/format";
 
 /**
  * A count that glows briefly when it changes between polls, so readers see what just moved.
- * Tabular figures keep the width steady as digits change.
+ * Large standalone values use proportional figures; pass `tabular-nums` in className where numbers align in columns.
  */
 export function LiveNumber({ value, className = "" }: { value: number; className?: string }) {
   const [shown, setShown] = useState(value);
@@ -18,7 +18,7 @@ export function LiveNumber({ value, className = "" }: { value: number; className
   }
   const anim = change.n === 0 ? "" : change.up ? "animate-flash-up" : "animate-flash-down";
   return (
-    <span key={change.n} className={`rounded tabular-nums ${anim} ${className}`}>
+    <span key={change.n} className={`rounded ${anim} ${className}`}>
       {formatCount(value)}
     </span>
   );

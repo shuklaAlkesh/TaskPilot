@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { startTransition, useActionState, useState } from "react";
 
-import { submitBatch, submitJob, type BatchState, type FormState } from "@/app/actions";
-import { BATCH_SIZES } from "@/lib/batch";
-import { formatCount, shortId } from "@/lib/format";
+import { submitJob, type FormState } from "@/app/actions";
+import { shortId } from "@/lib/format";
 import { FIELD_PREFIX, type Field } from "@/lib/payload";
 import { Icon } from "./icons";
 import { WorkerStatus } from "./worker-status";
@@ -89,7 +88,7 @@ function FieldInput({ field, example }: { field: Field; example: unknown }) {
   }
 }
 
-/** Single submit (generated payload form, pre-filled with the task's example) plus mixed batch submit. */
+/** Submit one task: a payload form generated from the task's schema, pre-filled with its example. */
 export function SubmitPanel({
   options,
   selected,
@@ -100,10 +99,20 @@ export function SubmitPanel({
   onSelect: (value: string) => void;
 }) {
   const [state, action, pending] = useActionState(submitJob, {} as FormState);
-  const [batch, batchAction, batchPending] = useActionState(submitBatch, {} as BatchState);
   const [rawJson, setRawJson] = useState(false);
   const task = options.find((o) => o.value === selected);
   const jsonMode = rawJson || !task?.fields;
+
+  if (options.length === 0) {
+    return (
+      <p className="text-sm text-zinc-400">
+        Nothing to submit yet: no worker has registered a task type for this application.{" "}
+        <Link href="/connect" className="text-indigo-400 hover:underline">
+          Connect a worker →
+        </Link>
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -117,18 +126,26 @@ export function SubmitPanel({
         }}
         className="space-y-4"
       >
-        <p className="text-sm text-zinc-400">Submit a task and watch it flow through the pipeline: submit → queue → worker → outcome.</p>
         <input type="hidden" name="mode" value={jsonMode ? "json" : "form"} />
         <div>
           <label htmlFor="task" className={labelCls}>
             Task type
           </label>
           <select id="task" name="task" value={selected} onChange={(e) => onSelect(e.target.value)} className={input}>
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
+            {[
+              { label: "Worker online", items: options.filter((o) => o.workersOnline > 0) },
+              { label: "No worker online (jobs will wait)", items: options.filter((o) => o.workersOnline === 0) },
+            ]
+              .filter((g) => g.items.length > 0)
+              .map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
           </select>
           {task && (
             <p className="mt-1.5 flex flex-wrap items-center gap-x-3 text-xs">
@@ -162,6 +179,9 @@ export function SubmitPanel({
           )}
         </fieldset>
 
+        <details className="rounded-lg border border-zinc-800 p-3 [&[open]>summary]:mb-3">
+          <summary className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-200">Advanced options</summary>
+          <div className="space-y-3">
         <div>
           <label htmlFor="idempotency_key" className={labelCls}>
             Idempotency key <span className="font-normal text-zinc-500">(auto-generated if empty)</span>
@@ -197,6 +217,8 @@ export function SubmitPanel({
             className={input}
           />
         </div>
+          </div>
+        </details>
 
         {state.error && (
           <div role="alert" className="rounded-md border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-300">
@@ -229,36 +251,6 @@ export function SubmitPanel({
           {pending ? "Submitting…" : "Submit task"}
         </button>
       </form>
-
-      {options.some((o) => o.value === "system.echo@1") && (
-      <form action={batchAction} className="space-y-2 border-t border-zinc-800 pt-4">
-        <div className="text-sm font-medium text-zinc-300">Batch submit</div>
-        <div className="grid grid-cols-3 gap-2">
-          {BATCH_SIZES.map((n) => (
-            <button
-              key={n}
-              name="count"
-              value={n}
-              disabled={batchPending}
-              className="flex items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950 py-2 text-sm font-semibold hover:bg-zinc-800 disabled:opacity-50"
-            >
-              <Icon name="shuffle" className="size-4" />
-              {n / 1000}k
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-zinc-500">
-          Mixed workload: echo, word count, CSV summary, and short test sleeps with injected retries and failures.
-        </p>
-        <p role="status" className="text-sm text-zinc-300">
-          {batchPending
-            ? "Submitting batch…"
-            : batch.submitted !== undefined &&
-              `Submitted ${formatCount(batch.submitted)} jobs in ${batch.seconds}s${batch.failed ? `, ${formatCount(batch.failed)} rejected (${batch.error})` : ""}.`}
-          {!batchPending && batch.submitted === undefined && batch.error}
-        </p>
-      </form>
-      )}
     </div>
   );
 }

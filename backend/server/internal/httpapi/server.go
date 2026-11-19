@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/accounts"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/auth"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/jobs"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/tasktypes"
@@ -25,6 +26,7 @@ import (
 type Server struct {
 	jobs         *jobs.Service
 	types        *tasktypes.Registry
+	accounts     *accounts.Service
 	pool         *pgxpool.Pool
 	workerTokens []string
 	log          *slog.Logger
@@ -32,8 +34,8 @@ type Server struct {
 }
 
 // New builds a Server.
-func New(svc *jobs.Service, types *tasktypes.Registry, pool *pgxpool.Pool, workerTokens []string, log *slog.Logger) *Server {
-	return &Server{jobs: svc, types: types, pool: pool, workerTokens: workerTokens, log: log}
+func New(svc *jobs.Service, types *tasktypes.Registry, acc *accounts.Service, pool *pgxpool.Pool, workerTokens []string, log *slog.Logger) *Server {
+	return &Server{jobs: svc, types: types, accounts: acc, pool: pool, workerTokens: workerTokens, log: log}
 }
 
 // SetShuttingDown makes /readyz fail so load balancers drain this instance.
@@ -56,6 +58,14 @@ func (s *Server) PublicHandler() http.Handler {
 	mux.HandleFunc("GET /v1/task-types", s.authed(auth.ScopeJobsRead, s.listTaskTypes))
 	mux.HandleFunc("GET /v1/stats", s.authed(auth.ScopeJobsRead, s.stats))
 	mux.HandleFunc("GET /v1/me", s.authed("", s.me))
+	// Dashboard sign-in (email code → session) and the user's applications and API keys.
+	mux.HandleFunc("POST /v1/auth/login-codes", s.requestLoginCode)
+	mux.HandleFunc("POST /v1/auth/sessions", s.createSession)
+	mux.HandleFunc("DELETE /v1/auth/sessions/current", s.signedIn(s.deleteSession))
+	mux.HandleFunc("GET /v1/apps", s.signedIn(s.listApps))
+	mux.HandleFunc("POST /v1/apps", s.signedIn(s.createApp))
+	mux.HandleFunc("GET /v1/apps/{app_id}/keys", s.signedIn(s.listKeys))
+	mux.HandleFunc("POST /v1/apps/{app_id}/keys", s.signedIn(s.createKey))
 	return s.middleware(mux)
 }
 
@@ -74,11 +84,18 @@ func (s *Server) WorkerHandler() http.Handler {
 
 type principalHandler func(w http.ResponseWriter, r *http.Request, p auth.Principal)
 
-// authed authenticates the API key and checks scope ("" = any valid key).
+// authed authenticates the caller and checks scope ("" = any valid key). The caller is an API key, or a
+// dashboard session plus the X-TaskPilot-App header naming one of the user's applications.
 func (s *Server) authed(scope string, h principalHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		p, err := auth.Authenticate(r.Context(), s.pool, key)
+		var p auth.Principal
+		var err error
+		if accounts.IsSessionToken(key) {
+			p, err = s.sessionPrincipal(r, key)
+		} else {
+			p, err = auth.Authenticate(r.Context(), s.pool, key)
+		}
 		if err != nil {
 			writeError(w, r, err)
 			return

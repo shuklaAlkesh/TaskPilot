@@ -24,16 +24,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </Link>
             {session && (
               <>
-                <Link href="/" className="text-sm text-zinc-400 hover:text-white">
-                  Dashboard
-                </Link>
-                <Link href="/jobs" className="text-sm text-zinc-400 hover:text-white">
-                  Jobs
-                </Link>
+                {session.appId && (
+                  <>
+                    <Link href="/" className="text-sm text-zinc-400 hover:text-white">
+                      Dashboard
+                    </Link>
+                    <Link href="/jobs" className="text-sm text-zinc-400 hover:text-white">
+                      Jobs
+                    </Link>
+                    <Link href="/connect" className="text-sm text-zinc-400 hover:text-white">
+                      Connect
+                    </Link>
+                  </>
+                )}
                 <div className="ml-auto flex items-center gap-3 text-sm">
-                  <span className="text-zinc-500" title="Tenant">
-                    {session.tenantName}
-                  </span>
+                  <Link
+                    href="/apps"
+                    className="rounded-md border border-zinc-800 px-2.5 py-1 text-zinc-300 hover:bg-zinc-800"
+                    title="Switch or register an application"
+                  >
+                    {session.tenantName ?? "Choose application"} ▾
+                  </Link>
+                  <span className="hidden text-zinc-500 sm:inline">{session.email}</span>
                   <form action="/logout" method="post">
                     <button className="rounded-md border border-zinc-300 px-2.5 py-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">
                       Sign out

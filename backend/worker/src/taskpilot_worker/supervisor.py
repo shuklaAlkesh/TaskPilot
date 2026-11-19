@@ -115,17 +115,19 @@ class Supervisor:
         return self._queues
 
     async def register(self, hostname: str, version: str) -> None:
-        """Announce this worker and every task type it can run; the API makes them submittable."""
-        await self._client.register(
-            {
-                "worker_id": self._worker_id,
-                "hostname": hostname,
-                "version": version,
-                "concurrency": self._cfg.concurrency,
-                "queues": self._queues,
-                "task_types": [s.definition() for s in self._registry.specs()],
-            }
-        )
+        """Announce this worker and every task type it can run; the API makes them submittable.
+        With an API key they belong to that application; without one they are shared."""
+        body: dict[str, Any] = {
+            "worker_id": self._worker_id,
+            "hostname": hostname,
+            "version": version,
+            "concurrency": self._cfg.concurrency,
+            "queues": self._queues,
+            "task_types": [s.definition() for s in self._registry.specs()],
+        }
+        if self._cfg.api_key:
+            body["api_key"] = self._cfg.api_key
+        await self._client.register(body)
 
     async def run(self, stop: asyncio.Event) -> None:
         """Claim and run jobs until stop is set and in-flight attempts are finished or reported."""

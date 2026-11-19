@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"slices"
 
+	"github.com/google/uuid"
+
+	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/auth"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/jobs"
 	"github.com/shuklaAlkesh/taskpilot/backend/server/internal/tasktypes"
 )
@@ -25,6 +28,8 @@ func (s *Server) registerWorker(w http.ResponseWriter, r *http.Request) {
 		Concurrency int                    `json:"concurrency"`
 		Queues      []string               `json:"queues"`
 		TaskTypes   []tasktypes.Definition `json:"task_types"`
+		// APIKey optionally names the application this worker serves; its task types then belong to it.
+		APIKey string `json:"api_key"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, r, err)
@@ -35,7 +40,16 @@ func (s *Server) registerWorker(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, invalidRequest("worker_id, concurrency 1-1024, 1-50 valid queues, and 1-500 task types are required"))
 		return
 	}
-	if err := s.types.Register(r.Context(), req.WorkerID, req.TaskTypes); err != nil {
+	var owner *uuid.UUID
+	if req.APIKey != "" {
+		p, err := auth.Authenticate(r.Context(), s.pool, req.APIKey)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		owner = &p.TenantID
+	}
+	if err := s.types.RegisterFor(r.Context(), req.WorkerID, owner, req.TaskTypes); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -50,7 +64,8 @@ func (s *Server) registerWorker(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	s.log.InfoContext(r.Context(), "worker registered", "worker_id", req.WorkerID, "queues", req.Queues, "task_types", len(keys))
+	s.log.InfoContext(r.Context(), "worker registered", "worker_id", req.WorkerID, "queues", req.Queues, "task_types", len(keys),
+		"owned", owner != nil)
 	writeJSON(w, http.StatusOK, map[string]int{"registered": len(keys)})
 }
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,6 +31,17 @@ func TestParseKey_RejectsMalformed(t *testing.T) {
 		_, _, err := ParseKey(k)
 		require.ErrorIs(t, err, ErrUnauthenticated, "key %q", k)
 	}
+}
+
+func TestPrincipalActor(t *testing.T) {
+	t.Parallel()
+	key, user := uuid.New(), uuid.New()
+	kind, id := Principal{KeyID: key}.Actor()
+	require.Equal(t, "api_key", kind)
+	require.Equal(t, key.String(), id)
+	kind, id = Principal{UserID: &user}.Actor()
+	require.Equal(t, "user", kind)
+	require.Equal(t, user.String(), id)
 }
 
 func TestWorkerTokenValid(t *testing.T) {

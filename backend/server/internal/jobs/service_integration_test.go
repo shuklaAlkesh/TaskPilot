@@ -640,3 +640,34 @@ func TestRegister_SchemaChangeRules(t *testing.T) {
 	tt, _ = s.types.Lookup(defs[0].Key)
 	require.Equal(t, "Echo (renamed)", tt.Title)
 }
+
+// A task type registered for an application is invisible to every other application; shared ones stay
+// usable by all until an application claims them.
+func TestRegister_ApplicationOwnership(t *testing.T) {
+	ctx := context.Background()
+	s := newService(t)
+	a, b := newTenant(t), newTenant(t)
+	owned := testDefinitions()[:1]
+	owned[0].Key = tasktypes.Key{TaskType: "billing.send_invoice", TaskVersion: 1}
+	in := SubmitInput{TaskType: "billing.send_invoice", TaskVersion: 1, Payload: json.RawMessage(`{"message":"inv-1"}`)}
+
+	require.NoError(t, s.types.RegisterFor(ctx, "worker-a", &a.TenantID, owned))
+	_, _, err := s.Submit(ctx, a, in)
+	require.NoError(t, err)
+	_, _, err = s.Submit(ctx, b, in)
+	require.ErrorIs(t, err, ErrUnknownTaskType, "another application's task type counts as unknown")
+	_, _, err = s.Submit(ctx, b, echo("shared"))
+	require.NoError(t, err, "shared task types stay usable by everyone")
+
+	require.ErrorIs(t, s.types.RegisterFor(ctx, "worker-b", &b.TenantID, owned), tasktypes.ErrOwnerConflict)
+	require.ErrorIs(t, s.types.Register(ctx, "worker-x", owned), tasktypes.ErrOwnerConflict, "can't be turned back into shared")
+	require.NoError(t, s.types.RegisterFor(ctx, "worker-a", &a.TenantID, owned), "the owner may re-register")
+
+	// The first application to register a shared task type takes it over.
+	require.NoError(t, s.types.RegisterFor(ctx, "worker-b", &b.TenantID, testDefinitions()[:1]))
+	_, _, err = s.Submit(ctx, a, echo("now owned by b"))
+	require.ErrorIs(t, err, ErrUnknownTaskType)
+	_, _, err = s.PutSchedule(ctx, a, ScheduleInput{Name: "nightly", TaskType: "system.echo", TaskVersion: 1,
+		Payload: json.RawMessage(`{"message":"x"}`), IntervalSeconds: ptr(60), Timezone: "UTC", Enabled: true})
+	require.ErrorIs(t, err, ErrUnknownTaskType, "schedules follow the same rule")
+}
